@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Driving Trip Logger</string>
+    <string name="awaiting_bluetooth_connection">Awaiting Bluetooth Connection</string>
+    <string name="logging_active">Logging Active</string>
+    <string name="service_enabled">Service Enabled</string>
+    <string name="notification_update">Last Fix: %1$s \u0020\u0020|\u0020\u0020 Speed: %2$d MPH</string>
+    <string name="stop_service">Stop Service</string>
+
+    <string name="notification_speed_units">" MPH"</string>
+    <string name="notification_last_fix_text">"Last Fix:"</string>
+    <string name="notification_speed_text">"Speed:"</string>
+
+</resources>

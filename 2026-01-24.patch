@@ -1,0 +1,470 @@
+Index: app/src/main/java/com/mallner/triplogger/DrivingService.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/mallner/triplogger/DrivingService.kt b/app/src/main/java/com/mallner/triplogger/DrivingService.kt
+--- a/app/src/main/java/com/mallner/triplogger/DrivingService.kt
++++ b/app/src/main/java/com/mallner/triplogger/DrivingService.kt	(date 1769283621484)
+@@ -82,7 +82,7 @@
+             // Handle the failure case (e.g., show a notification, retry later)
+         }
+     }
+-    
++
+     @SuppressLint("MissingPermission")
+     private fun isDeviceConnected(deviceName: String): Boolean {
+         // Check if Bluetooth is enabled
+Index: 2026-01-23.patch
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/2026-01-23.patch b/2026-01-23.patch
+new file mode 100755
+--- /dev/null	(date 1769283679818)
++++ b/2026-01-23.patch	(date 1769283679818)
+@@ -0,0 +1,443 @@
++Index: app/src/main/java/com/mallner/triplogger/obd/ObdPid.kt
++IDEA additional info:
++Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
++<+>UTF-8
++===================================================================
++diff --git a/app/src/main/java/com/mallner/triplogger/obd/ObdPid.kt b/app/src/main/java/com/mallner/triplogger/obd/ObdPid.kt
++new file mode 100755
++--- /dev/null	(date 1769280308938)
+++++ b/app/src/main/java/com/mallner/triplogger/obd/ObdPid.kt	(date 1769280308938)
++@@ -0,0 +1,36 @@
+++package com.mallner.triplogger.obd
+++
+++data class ObdPid(
+++    val pid: String,                 // e.g. "010C"
+++    val name: String,                // e.g. "Engine RPM"
+++    val unit: String,
+++    val parser: (String) -> Any?
+++)
+++
+++object StandardPids {
+++
+++    val ENGINE_RPM = ObdPid(
+++        pid = "010C",
+++        name = "Engine RPM",
+++        unit = "rpm"
+++    ) { response ->
+++        val m = Regex("41 0C ([0-9A-F]{2}) ([0-9A-F]{2})").find(response) ?: return@ObdPid null
+++        val a = m.groupValues[1].toInt(16)
+++        val b = m.groupValues[2].toInt(16)
+++        ((a * 256) + b) / 4
+++    }
+++
+++    val VEHICLE_SPEED = ObdPid(
+++        pid = "010D",
+++        name = "Vehicle Speed",
+++        unit = "km/h"
+++    ) { response ->
+++        val m = Regex("41 0D ([0-9A-F]{2})").find(response) ?: return@ObdPid null
+++        m.groupValues[1].toInt(16)
+++    }
+++
+++    val ALL = listOf(
+++        ENGINE_RPM,
+++        VEHICLE_SPEED
+++    )
+++}
++Index: app/src/main/java/com/mallner/triplogger/obd/ObdManager.kt
++IDEA additional info:
++Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
++<+>UTF-8
++===================================================================
++diff --git a/app/src/main/java/com/mallner/triplogger/obd/ObdManager.kt b/app/src/main/java/com/mallner/triplogger/obd/ObdManager.kt
++new file mode 100755
++--- /dev/null	(date 1769283621472)
+++++ b/app/src/main/java/com/mallner/triplogger/obd/ObdManager.kt	(date 1769283621472)
++@@ -0,0 +1,112 @@
+++package com.mallner.triplogger.obd
+++
+++import android.bluetooth.BluetoothDevice
+++import android.bluetooth.BluetoothSocket
+++import android.util.Log
+++import com.mallner.triplogger.signals.SignalStore
+++import kotlinx.coroutines.*
+++import java.io.InputStream
+++import java.io.OutputStream
+++import java.util.UUID
+++
+++class ObdManager(
+++    private val scope: CoroutineScope,
+++    private val signalStore: SignalStore,
+++    private val deviceID: String
+++) {
+++
+++    private var socket: BluetoothSocket? = null
+++    private var job: Job? = null
+++
+++    private var isConnected: Boolean = false
+++    private val sppUuid: UUID =
+++        UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // Serial Port Profile (SPP)
+++
+++
+++    fun disconnect() {
+++        isConnected = false
+++    }
+++
+++    fun start(
+++        device: BluetoothDevice,
+++        pids: List<ObdPid>
+++    ) {
+++        stop()
+++
+++        job = scope.launch(Dispatchers.IO) {
+++            try {
+++                val (input, output) = if (!isConnected) {
+++                    socket = device.createInsecureRfcommSocketToServiceRecord(sppUuid)
+++                    socket!!.connect()
+++
+++                    val inputStream = socket!!.inputStream
+++                    val outputStream = socket!!.outputStream
+++
+++                    initElm(outputStream, inputStream)
+++                    Log.d("ObdManager", "ELM327 Initialized and connected.")
+++                    isConnected = true
+++                    Pair(inputStream, outputStream)
+++                } else {
+++                    Pair(socket!!.inputStream, socket!!.outputStream)
+++                }
+++
+++                while (isActive) {
+++                    for (pid in pids) {
+++                        send(output, pid.pid)
+++                        Log.d("ObdManager", "Sent: ${pid.pid}")
+++                        val response = readResponse(input)
+++                        Log.d("ObdManager", "Received response: $response")
+++                        pid.parser(response)?.let { value ->
+++                            signalStore.update("obd.${pid.pid}", value)
+++                        }
+++
+++                        if (!isActive) { break }
+++                        delay(80)
+++                    }
+++                }
+++            } catch (e: Exception) {
+++                Log.e("ObdManager", "OBD error", e)
+++            }
+++        }
+++    }
+++
+++    fun stop() {
+++        job?.cancel()
+++        job = null
+++
+++        try {
+++            socket?.close()
+++        } catch (_: Exception) {
+++        } finally {
+++            socket = null
+++        }
+++    }
+++
+++    private suspend fun initElm(output: OutputStream, input: InputStream) {
+++        val commands = listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0")
+++        for (cmd in commands) {
+++            send(output, cmd)
+++            Log.d("ObdManager", "Sent: $cmd")
+++
+++            val resp = readResponse(input)
+++            Log.d("ObdManager", "Received response: $resp")
+++
+++            delay(150)
+++        }
+++    }
+++
+++    private fun send(output: OutputStream, cmd: String) {
+++        output.write((cmd + "\r").toByteArray())
+++        output.flush()
+++    }
+++
+++    private fun readResponse(input: InputStream): String {
+++        val sb = StringBuilder()
+++        while (true) {
+++            val c = input.read().toChar()
+++            if (c == '>') break
+++            sb.append(c)
+++        }
+++        return sb.toString().trim()
+++    }
+++}
++Index: app/src/main/java/com/mallner/triplogger/obd/ObdScanner.kt
++IDEA additional info:
++Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
++<+>UTF-8
++===================================================================
++diff --git a/app/src/main/java/com/mallner/triplogger/obd/ObdScanner.kt b/app/src/main/java/com/mallner/triplogger/obd/ObdScanner.kt
++new file mode 100755
++--- /dev/null	(date 1769283621464)
+++++ b/app/src/main/java/com/mallner/triplogger/obd/ObdScanner.kt	(date 1769283621464)
++@@ -0,0 +1,124 @@
+++package com.mallner.triplogger.obd
+++
+++import android.Manifest
+++import android.bluetooth.BluetoothAdapter
+++import android.bluetooth.BluetoothDevice
+++import android.content.BroadcastReceiver
+++import android.content.Context
+++import android.content.Intent
+++import android.content.IntentFilter
+++import android.content.pm.PackageManager
+++import android.os.Build
+++import android.util.Log
+++import androidx.core.content.ContextCompat
+++import kotlinx.coroutines.CancellableContinuation
+++import kotlinx.coroutines.suspendCancellableCoroutine
+++import kotlinx.coroutines.withTimeoutOrNull
+++import kotlin.coroutines.resume
+++
+++class ObdScanner(
+++    private val context: Context,
+++    private val bluetoothAdapter: BluetoothAdapter
+++) {
+++
+++    /**
+++     * Scans for a specific Bluetooth device by its name or address.
+++     *
+++     * This function will start a Bluetooth discovery and return the `BluetoothDevice`
+++     * as soon as it finds one matching the provided `targetIdentifier` (which can be a name or MAC address).
+++     *
+++     * @param targetIdentifier The name or MAC address of the OBD device to find.
+++     * @param timeoutMillis The maximum time to scan before giving up.
+++     * @return The found `BluetoothDevice`, or `null` if it's not found within the timeout or if permissions are missing.
+++     */
+++    suspend fun findDevice(targetIdentifier: String, timeoutMillis: Long = 15000L): BluetoothDevice? {
+++        // 1. Check for required permissions before scanning.
+++        if (!hasRequiredPermissions()) {
+++            Log.e("ObdScanner", "Bluetooth permissions (SCAN and CONNECT) are not granted.")
+++            return null
+++        }
+++
+++        if (!bluetoothAdapter.isEnabled) {
+++            Log.e("ObdScanner", "Bluetooth is not enabled.")
+++            return null
+++        }
+++
+++        // Using withTimeoutOrNull to automatically handle cancellation and timeout.
+++        return withTimeoutOrNull(timeoutMillis) {
+++            // suspendCancellableCoroutine allows us to bridge the callback-based BroadcastReceiver
+++            // with coroutines in a safe way.
+++            suspendCancellableCoroutine { continuation ->
+++                val receiver = createBroadcastReceiver(targetIdentifier, continuation)
+++
+++                // This block is called when the coroutine is cancelled (e.g., by timeout).
+++                continuation.invokeOnCancellation {
+++                    Log.d("ObdScanner", "Scan cancelled. Unregistering receiver and stopping discovery.")
+++                    stopDiscovery(receiver)
+++                }
+++
+++                Log.d("ObdScanner", "Starting discovery to find '$targetIdentifier'...")
+++                context.registerReceiver(receiver, IntentFilter(BluetoothDevice.ACTION_FOUND))
+++                bluetoothAdapter.startDiscovery()
+++            }
+++        }
+++    }
+++
+++    private fun createBroadcastReceiver(
+++        targetIdentifier: String,
+++        continuation: CancellableContinuation<BluetoothDevice>
+++    ) = object : BroadcastReceiver() {
+++        override fun onReceive(context: Context, intent: Intent) {
+++            if (intent.action == BluetoothDevice.ACTION_FOUND) {
+++                val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+++                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+++                } else {
+++                    @Suppress("DEPRECATION")
+++                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+++                }
+++
+++                // A found device might have a null name.
+++                val deviceName = try { device?.name } catch (e: SecurityException) { null }
+++                val deviceAddress = device?.address
+++
+++                Log.v("ObdScanner", "Found device: Name='${deviceName ?: "N/A"}', Address='$deviceAddress'")
+++
+++                // Check if the found device matches our target.
+++                if (device != null && (deviceName == targetIdentifier || deviceAddress == targetIdentifier)) {
+++                    Log.i("ObdScanner", "Target device '$targetIdentifier' found!")
+++
+++                    // Stop discovery immediately to save power.
+++                    stopDiscovery(this)
+++
+++                    // Safely resume the coroutine with the found device.
+++                    if (continuation.isActive) {
+++                        continuation.resume(device)
+++                    }
+++                }
+++            }
+++        }
+++    }
+++
+++    private fun stopDiscovery(receiver: BroadcastReceiver) {
+++        try {
+++            if (bluetoothAdapter.isDiscovering) {
+++                bluetoothAdapter.cancelDiscovery()
+++            }
+++            context.unregisterReceiver(receiver)
+++        } catch (e: Exception) {
+++            // Can happen if receiver was already unregistered. It's safe to ignore.
+++            Log.w("ObdScanner", "Error unregistering receiver, may have already been unregistered.", e)
+++        }
+++    }
+++
+++    private fun hasRequiredPermissions(): Boolean {
+++        // Permissions changed in Android 12 (API 31)
+++        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+++            listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+++        } else {
+++            listOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.ACCESS_FINE_LOCATION)
+++        }
+++        return permissions.all {
+++            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+++        }
+++    }
+++}
++Index: app/src/main/java/com/mallner/triplogger/signals/SignalStore.kt
++IDEA additional info:
++Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
++<+>UTF-8
++===================================================================
++diff --git a/app/src/main/java/com/mallner/triplogger/signals/SignalStore.kt b/app/src/main/java/com/mallner/triplogger/signals/SignalStore.kt
++new file mode 100755
++--- /dev/null	(date 1769280420873)
+++++ b/app/src/main/java/com/mallner/triplogger/signals/SignalStore.kt	(date 1769280420873)
++@@ -0,0 +1,30 @@
+++package com.mallner.triplogger.signals
+++
+++import java.util.concurrent.ConcurrentHashMap
+++
+++typealias SignalId = String
+++
+++class SignalStore {
+++
+++    data class SignalValue(
+++        val timestamp: Long,
+++        val value: Any
+++    )
+++
+++    private val values = ConcurrentHashMap<SignalId, SignalValue>()
+++
+++    fun update(id: SignalId, value: Any) {
+++        values[id] = SignalValue(
+++            timestamp = System.currentTimeMillis(),
+++            value = value
+++        )
+++    }
+++
+++    fun snapshot(): Map<SignalId, SignalValue> {
+++        return values.toMap()
+++    }
+++
+++    fun clear() {
+++        values.clear()
+++    }
+++}
++Index: app/src/main/java/com/mallner/triplogger/AppSettings.kt
++IDEA additional info:
++Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
++<+>UTF-8
++===================================================================
++diff --git a/app/src/main/java/com/mallner/triplogger/AppSettings.kt b/app/src/main/java/com/mallner/triplogger/AppSettings.kt
++--- a/app/src/main/java/com/mallner/triplogger/AppSettings.kt
+++++ b/app/src/main/java/com/mallner/triplogger/AppSettings.kt	(date 1769281942405)
++@@ -16,6 +16,7 @@
++ 
++ data class AppSettings(
++     val bluetoothDeviceName: String,
+++    val bluetoothOBDDevice: String,
++     val loggingFrequency: Int,
++     val maxLogFileSize: Long,
++     val forceLogging: Boolean,
++@@ -25,6 +26,7 @@
++ 
++ object AppSettingsKeys {
++     val BLUETOOTH_DEVICE_NAME = stringPreferencesKey("bluetooth_device_name")
+++    val BLUETOOTH_OBD_DEVICE_NAME = stringPreferencesKey("bluetooth_obd_device_name")
++     val LOGGING_FREQUENCY = intPreferencesKey("logging_frequency")
++     val MAX_LOG_FILE_SIZE = longPreferencesKey("max_log_file_size")
++     val FORCE_LOGGING = booleanPreferencesKey("force_logging")
++@@ -44,6 +46,12 @@
++         }
++     }
++ 
+++    suspend fun updateBluetoothOBDDeviceName(name: String) {
+++        context.dataStore.edit {
+++            it[AppSettingsKeys.BLUETOOTH_OBD_DEVICE_NAME] = name
+++        }
+++    }
+++
++     suspend fun updateLoggingFrequency(frequency: Int) {
++         context.dataStore.edit {
++             it[AppSettingsKeys.LOGGING_FREQUENCY] = frequency
++@@ -76,11 +84,12 @@
++ 
++     private fun mapAppSettings(preferences: Preferences): AppSettings {
++         val bluetoothDeviceName = preferences[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] ?: ""
+++        val bluetoothOBDDevice = preferences[AppSettingsKeys.BLUETOOTH_OBD_DEVICE_NAME] ?: ""
++         val loggingFrequency = preferences[AppSettingsKeys.LOGGING_FREQUENCY] ?: 10
++         val maxLogFileSize = preferences[AppSettingsKeys.MAX_LOG_FILE_SIZE] ?: 1024 * 1024 // 1MB default
++         val forceLogging = preferences[AppSettingsKeys.FORCE_LOGGING] ?: false
++         val serviceEnabled = preferences[AppSettingsKeys.SERVICE_ENABLED] ?: false
++         val storageLocationUri = preferences[AppSettingsKeys.STORAGE_LOCATION_URI] ?: ""
++-        return AppSettings(bluetoothDeviceName, loggingFrequency, maxLogFileSize, forceLogging, storageLocationUri, serviceEnabled)
+++        return AppSettings(bluetoothDeviceName, bluetoothOBDDevice, loggingFrequency, maxLogFileSize, forceLogging, storageLocationUri, serviceEnabled)
++     }
++ }
++\ No newline at end of file
++Index: app/src/main/java/com/mallner/triplogger/DrivingService.kt
++IDEA additional info:
++Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
++<+>UTF-8
++===================================================================
++diff --git a/app/src/main/java/com/mallner/triplogger/DrivingService.kt b/app/src/main/java/com/mallner/triplogger/DrivingService.kt
++--- a/app/src/main/java/com/mallner/triplogger/DrivingService.kt
+++++ b/app/src/main/java/com/mallner/triplogger/DrivingService.kt	(date 1769283621484)
++@@ -22,6 +22,8 @@
++ import com.google.android.gms.location.LocationResult
++ import com.google.android.gms.location.LocationServices
++ import com.google.android.gms.location.Priority
+++import com.mallner.triplogger.obd.ObdScanner
+++import com.mallner.triplogger.obd.ObdManager
++ import kotlinx.coroutines.CoroutineScope
++ import kotlinx.coroutines.Dispatchers
++ import kotlinx.coroutines.flow.first
++@@ -56,6 +58,31 @@
++         }
++     }
++ 
+++    private suspend fun connectToObdDevice() {
+++        val settings = appSettingsRepository.appSettingsFlow.first()
+++        val targetDeviceIdentifier = settings.bluetoothOBDDevice
+++
+++        if (targetDeviceIdentifier.isBlank()) {
+++            Log.w("DrivingService", "No OBD device configured in settings.")
+++            return
+++        }
+++
+++        val bluetoothAdapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+++        val scanner = ObdScanner(applicationContext, bluetoothAdapter)
+++
+++        Log.d("DrivingService", "Scanning for OBD device: $targetDeviceIdentifier")
+++        val device = scanner.findDevice(targetDeviceIdentifier)
+++
+++        if (device != null) {
+++            Log.i("ObdConnect", "Device found. Starting ObdManager.")
+++            // You now have the BluetoothDevice object needed by ObdManager
+++            ObdManager.start(device, getRelevantPids())
+++        } else {
+++            Log.e("ObdConnect", "Could not find OBD device '$targetDeviceIdentifier' after scanning.")
+++            // Handle the failure case (e.g., show a notification, retry later)
+++        }
+++    }
+++
++     @SuppressLint("MissingPermission")
++     private fun isDeviceConnected(deviceName: String): Boolean {
++         // Check if Bluetooth is enabled

@@ -20,7 +20,18 @@ data class AppSettings(
     val maxLogFileSize: Long,
     val forceLogging: Boolean,
     val storageLocationUri: String,
-    val serviceEnabled: Boolean
+    val serviceEnabled: Boolean,
+    // OBD-II (ELM327)
+    val obdEnabled: Boolean = false,
+    val obdDeviceName: String = "",
+    val obdPollIntervalMs: Int = 1000,
+    val obdSelectedPids: List<String> = ObdPids.DEFAULTS,
+    val generateKmz: Boolean = true,
+    val saveOds: Boolean = false,
+    /** Separate user-selectable folders (fall back to storageLocationUri / app storage) */
+    val tempLocationUri: String = "",
+    val kmzLocationUri: String = "",
+    val odsLocationUri: String = ""
 )
 
 object AppSettingsKeys {
@@ -30,6 +41,15 @@ object AppSettingsKeys {
     val FORCE_LOGGING = booleanPreferencesKey("force_logging")
     val SERVICE_ENABLED = booleanPreferencesKey("logging_service_enabled")
     val STORAGE_LOCATION_URI = stringPreferencesKey("storage_location_uri")
+    val OBD_ENABLED = booleanPreferencesKey("obd_enabled")
+    val OBD_DEVICE_NAME = stringPreferencesKey("obd_device_name")
+    val OBD_POLL_INTERVAL_MS = intPreferencesKey("obd_poll_interval_ms")
+    val OBD_SELECTED_PIDS = stringPreferencesKey("obd_selected_pids")
+    val GENERATE_KMZ = booleanPreferencesKey("generate_kmz")
+    val SAVE_ODS = booleanPreferencesKey("save_ods")
+    val TEMP_LOCATION_URI = stringPreferencesKey("temp_location_uri")
+    val KMZ_LOCATION_URI = stringPreferencesKey("kmz_location_uri")
+    val ODS_LOCATION_URI = stringPreferencesKey("ods_location_uri")
 }
 
 class AppSettingsRepository(private val context: Context) {
@@ -74,6 +94,60 @@ class AppSettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun updateObdEnabled(enabled: Boolean) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.OBD_ENABLED] = enabled
+        }
+    }
+
+    suspend fun updateObdDeviceName(name: String) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.OBD_DEVICE_NAME] = name
+        }
+    }
+
+    suspend fun updateObdPollIntervalMs(intervalMs: Int) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.OBD_POLL_INTERVAL_MS] = intervalMs.coerceIn(250, 60_000)
+        }
+    }
+
+    suspend fun updateObdSelectedPids(pids: List<String>) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.OBD_SELECTED_PIDS] = pids.joinToString(",")
+        }
+    }
+
+    suspend fun updateGenerateKmz(enabled: Boolean) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.GENERATE_KMZ] = enabled
+        }
+    }
+
+    suspend fun updateSaveOds(enabled: Boolean) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.SAVE_ODS] = enabled
+        }
+    }
+
+    suspend fun updateTempLocationUri(uri: String) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.TEMP_LOCATION_URI] = uri
+        }
+    }
+
+    suspend fun updateKmzLocationUri(uri: String) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.KMZ_LOCATION_URI] = uri
+        }
+    }
+
+    suspend fun updateOdsLocationUri(uri: String) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.ODS_LOCATION_URI] = uri
+        }
+    }
+
     private fun mapAppSettings(preferences: Preferences): AppSettings {
         val bluetoothDeviceName = preferences[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] ?: ""
         val loggingFrequency = preferences[AppSettingsKeys.LOGGING_FREQUENCY] ?: 10
@@ -81,6 +155,21 @@ class AppSettingsRepository(private val context: Context) {
         val forceLogging = preferences[AppSettingsKeys.FORCE_LOGGING] ?: false
         val serviceEnabled = preferences[AppSettingsKeys.SERVICE_ENABLED] ?: false
         val storageLocationUri = preferences[AppSettingsKeys.STORAGE_LOCATION_URI] ?: ""
-        return AppSettings(bluetoothDeviceName, loggingFrequency, maxLogFileSize, forceLogging, storageLocationUri, serviceEnabled)
+        val obdEnabled = preferences[AppSettingsKeys.OBD_ENABLED] ?: false
+        val obdDeviceName = preferences[AppSettingsKeys.OBD_DEVICE_NAME] ?: ""
+        val obdPollIntervalMs = preferences[AppSettingsKeys.OBD_POLL_INTERVAL_MS] ?: 1000
+        val obdSelectedPids = preferences[AppSettingsKeys.OBD_SELECTED_PIDS]
+            ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?: ObdPids.DEFAULTS
+        val generateKmz = preferences[AppSettingsKeys.GENERATE_KMZ] ?: true
+        val saveOds = preferences[AppSettingsKeys.SAVE_ODS] ?: false
+        val tempLocationUri = preferences[AppSettingsKeys.TEMP_LOCATION_URI] ?: ""
+        val kmzLocationUri = preferences[AppSettingsKeys.KMZ_LOCATION_URI] ?: ""
+        val odsLocationUri = preferences[AppSettingsKeys.ODS_LOCATION_URI] ?: ""
+        return AppSettings(
+            bluetoothDeviceName, loggingFrequency, maxLogFileSize, forceLogging, storageLocationUri, serviceEnabled,
+            obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
+            tempLocationUri, kmzLocationUri, odsLocationUri
+        )
     }
 }

@@ -10,6 +10,17 @@ android {
         version = release(36)
     }
 
+    // Android Studio runs as a flatpak on this machine and uses its own debug keystore.
+    // Sign with that one when present so command-line installs can update the same package.
+    val flatpakDebugKeystore = file(System.getProperty("user.home") + "/.var/app/com.google.AndroidStudio/config/.android/debug.keystore")
+    if (flatpakDebugKeystore.exists()) {
+        signingConfigs {
+            getByName("debug") {
+                storeFile = flatpakDebugKeystore
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.mallner.triplogger"
         minSdk = 24

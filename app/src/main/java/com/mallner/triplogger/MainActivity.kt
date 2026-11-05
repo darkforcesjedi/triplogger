@@ -152,6 +152,9 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
     val currentLogFile by DrivingStatus.currentLogFile.collectAsState()
     val lastLocation by DrivingStatus.lastLocation.collectAsState()
     val serviceEnabled by DrivingStatus.isEnabled.collectAsState()
+    val obdEnabled = appSettings.obdEnabled
+    val obdConnected by DrivingStatus.isObdConnected.collectAsState()
+    val obdValues by DrivingStatus.obdValues.collectAsState()
 
     // Use LaunchedEffect to start the service based on the initial appSettings state
     LaunchedEffect(key1 = appSettings.serviceEnabled, key2 = permissionsGranted) {
@@ -218,6 +221,37 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             Text("Current Log File:\n${currentLogFile ?: "N/A"}")
             Text("Last Location: ${lastLocation?.latitude}, ${lastLocation?.longitude}")
             Text("Speed: ${lastLocation?.speed?.times(2.23694f)} MPH")
+
+            if (obdEnabled) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "OBD-II:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Text("Adapter Connected: $obdConnected")
+                if (obdConnected) {
+                    val speedMph = obdValues["0D"]?.let { String.format("%.0f", it * 0.621371) }
+                    val rpm = obdValues["0C"]?.toInt()
+                    val coolant = obdValues["05"]?.toInt()
+                    Text("Speed (OBD): ${speedMph ?: "-"} MPH")
+                    Text("Engine RPM: ${rpm ?: "-"}")
+                    Text("Coolant Temp: ${coolant ?: "-"} °C")
+                    val extras = obdValues
+                        .filterKeys { it !in setOf("0D", "0C", "05") }
+                        .mapNotNull { (hex, value) ->
+                            val pid = ObdPids.byHex(hex) ?: return@mapNotNull null
+                            "${pid.name}: ${String.format("%.1f", value)} ${pid.unit}"
+                        }
+                        .take(6)
+                        .joinToString("\n")
+                    if (extras.isNotEmpty()) {
+                        Text(extras)
+                    }
+                } else {
+                    Text("Connecting to adapter… (make sure the car is on)")
+                }
+            }
         } else {
             Text("Permissions not granted. Please grant permissions for the app to function correctly.")
             Button(onClick = onRequestPermissions) {

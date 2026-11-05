@@ -9,4 +9,7 @@ object DrivingStatus {
     val isLogging = MutableStateFlow(false)
     val currentLogFile = MutableStateFlow<String?>(null)
     val lastLocation = MutableStateFlow<Location?>(null)
+    val isObdConnected = MutableStateFlow(false)
+    val obdValues = MutableStateFlow<Map<String, Double?>>(emptyMap())
+    val obdStatusText = MutableStateFlow<String?>(null)
 }

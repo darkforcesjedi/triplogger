@@ -103,8 +103,9 @@ class AppNotificationManager(private val context: Context) {
 
     // THIS IS THE KEY METHOD FOR YOUR UPDATES
     // It's lightweight and will not reset the screen-off timer.
-    fun updateStatus(statusText: String = "", lastFix: String = "", speed: String = "") {
+    fun updateStatus(statusText: String = "", lastFix: String = "", speed: String = "", extra: String? = null) {
         // 1. Update the text in the RemoteViews object
+        val statusText = if (extra.isNullOrEmpty()) statusText else "$statusText • $extra"
         if (!statusText.isEmpty()) {
             expandedRemoteViews.setTextViewText(R.id.notification_status_line, statusText)
             collapsedRemoteViews.setTextViewText(R.id.notification_collapsed_status, statusText)

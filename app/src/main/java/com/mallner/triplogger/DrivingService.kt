@@ -483,9 +483,25 @@ class DrivingService : Service() {
         }
     }
 
-    private suspend fun pollLoop(client: Elm327Client, settings: AppSettings) {
-        val pids = settings.obdSelectedPids.mapNotNull { ObdPids.byHex(it) }
-        val interval = settings.obdPollIntervalMs.coerceAtLeast(250).toLong()
+    /**
+     * PIDs to poll every cycle: the log selection plus 0D/0C (gauges always need
+     * speed + RPM) and the indicator PIDs whose corner icon is switched on.
+     * Only settings.obdSelectedPids are written to the journal; the rest update
+     * the live gauges/indicators (LiveJournal ignores map keys it has no
+     * column for).
+     */
+    private fun pollPidsFor(settings: AppSettings): List<ObdPid> {
+        val wanted = LinkedHashSet(settings.obdSelectedPids.map { it.uppercase() })
+        wanted.add("0D")
+        wanted.add("0C")
+        if (settings.showHybridCharge) wanted.add("5B")
+        if (settings.showFuelLevel) wanted.add("2F")
+        return ObdPids.ALL.filter { it.hex in wanted }
+    }
+
+    private suspend fun pollLoop(client: Elm327Client, initial: AppSettings) {
+        var settings = initial
+        var pids = pollPidsFor(settings)
         while (kotlin.coroutines.coroutineContext[Job]?.isActive != false) {
             val cycleStart = System.currentTimeMillis()
             val values = HashMap<String, Double?>()
@@ -535,6 +551,11 @@ class DrivingService : Service() {
                 )
             }
 
+            // pick up sensor/indicator/gauge settings changes mid-trip without reconnecting
+            settings = settingsSnapshot()
+            pids = pollPidsFor(settings)
+
+            val interval = settings.obdPollIntervalMs.coerceAtLeast(250).toLong()
             val elapsed = System.currentTimeMillis() - cycleStart
             delay((interval - elapsed).coerceAtLeast(50L))
         }

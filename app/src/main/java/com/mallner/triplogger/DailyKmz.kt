@@ -13,8 +13,10 @@ interface PlotRenderer {
      * @param tzOffsetMin  minutes east of UTC for the "HH:mm" axis labels
      * @param tzChanges    time + new "+hh:mm" offset at each time zone/DST change to
      *                     mark with a dashed vertical gridline (may be empty)
+     * @param dateChanges  time + new "MM-dd" at each local calendar-day change to
+     *                     mark with a dotted vertical gridline (may be empty)
      */
-    fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
+    fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
 }
 
 data class TrackPoint(val gpsTimeMs: Long, val lon: Double, val lat: Double, val alt: Double, val tzOffsetMin: Int? = null)
@@ -29,6 +31,8 @@ data class TripTrack(
     val gpsSpeeds: List<Pair<Long, Float>>,
     /** Offset changes during the trip (time, new "+hh:mm" label) for the plot. */
     val tzChanges: List<Pair<Long, String>> = emptyList(),
+    /** Local calendar-day changes during the trip (time, new "MM-dd") for the plot. */
+    val dateChanges: List<Pair<Long, String>> = emptyList(),
     /** Minutes east of UTC the trip started in (plot axis labels). */
     val tzOffsetMin: Int? = null
 )
@@ -146,7 +150,10 @@ class DailyKmz(
 
         for (trip in trips) {
             if (trip.points.isEmpty() && trip.obdSpeeds.isEmpty() && trip.gpsSpeeds.isEmpty()) continue
-            val png = renderer.renderPng(trip.label, trip.speedUnit, trip.tzOffsetMin, trip.tzChanges, trip.obdSpeeds, trip.gpsSpeeds)
+            val png = renderer.renderPng(
+                trip.label, trip.speedUnit, trip.tzOffsetMin,
+                trip.tzChanges, trip.dateChanges, trip.obdSpeeds, trip.gpsSpeeds
+            )
             val existing = kml?.let { findPlacemarkRange(it, trip.trackId) }
             if (kml != null && existing != null) {
                 // Re-processing the same trip (recovery / rebuild): replace its

@@ -39,7 +39,7 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
         }
     }
 
-    override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
+    override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
         var minx = Double.MAX_VALUE
         var maxx = -Double.MAX_VALUE
         if (obdSpeeds.isNotEmpty()) {
@@ -128,6 +128,32 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
                     drawTopLeftText(canvas, stime, (xpos + 1).toFloat(), 1f, textPaint)
                 }
                 xpos += gridX
+            }
+
+            // Date changes: dotted vertical gridline + rotated "MM-dd" label
+            if (dateChanges.isNotEmpty()) {
+                val dateLinePaint = Paint(gridPaint).apply {
+                    color = Color.rgb(150, 60, 150)
+                    pathEffect = android.graphics.DashPathEffect(floatArrayOf(2f, 6f), 0f)
+                }
+                val datePaint = Paint(textPaint).apply {
+                    color = Color.rgb(150, 60, 150)
+                    textSize = FONT_PX * 0.8f
+                }
+                for ((changeMs, dateLabel) in dateChanges) {
+                    val dx = ((changeMs / 1000.0 - minx) * scaleX).toFloat()
+                    if (dx < 2f || dx > w - 2f) continue
+                    canvas.drawLine(dx, 0f, dx, h.toFloat(), dateLinePaint)
+                    // label left of the line (tz labels sit right of theirs), vertically centered
+                    val cx = (dx - 12f).coerceAtLeast(14f)
+                    val cy = h / 2f
+                    val tw = datePaint.measureText(dateLabel)
+                    val th = datePaint.descent() - datePaint.ascent()
+                    canvas.save()
+                    canvas.rotate(-90f, cx, cy)
+                    canvas.drawText(dateLabel, cx - tw / 2f, cy + th / 2f, datePaint)
+                    canvas.restore()
+                }
             }
 
             // Time zone / DST changes: dashed vertical gridline + rotated "+hh:mm" label

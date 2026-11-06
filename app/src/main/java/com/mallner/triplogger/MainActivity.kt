@@ -23,7 +23,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -64,6 +67,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -141,8 +145,6 @@ fun TripLoggerApp() {
     }
 
     NavigationSuiteScaffold(
-        // keep content above the soft keyboard instead of letting the window pan
-        modifier = Modifier.imePadding(),
         navigationSuiteItems = {
             AppDestinations.entries.forEach { destination ->
                 item(
@@ -159,7 +161,13 @@ fun TripLoggerApp() {
             }
         }
     ) {
-        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+        // Per-edge inset union: status bar / nav bar / display cutout wherever the
+        // system places them (top, sides in landscape, head-unit side bars) plus the
+        // IME, consumed once so nothing overlaps or double-pads.
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            contentWindowInsets = WindowInsets.safeDrawing.union(WindowInsets.ime)
+        ) { innerPadding ->
             if (currentDestination == AppDestinations.HOME) {
                 HomeScreen(modifier = Modifier.padding(innerPadding), permissionsGranted = permissionsGranted, onRequestPermissions = { launcher.launch(permissionsToRequest) })
             } else {
@@ -480,11 +488,15 @@ private fun ObdIndicator(iconRes: Int, value: Double?) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.width(2.dp))
+        // fixed width right-aligned: "--" -> "100%" never shifts the neighboring indicator
         Text(
             text = text,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier.width(40.dp)
         )
     }
 }

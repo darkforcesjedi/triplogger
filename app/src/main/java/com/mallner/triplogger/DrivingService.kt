@@ -53,6 +53,7 @@ class DrivingService : Service() {
 
     private var obdJob: Job? = null
     private var lastObdValues: Map<String, Double?> = emptyMap()
+    private val obdConnector by lazy { ObdDeviceConnector(this) }
 
     private fun settingsSnapshot(): AppSettings = kotlinx.coroutines.runBlocking {
         appSettingsRepository.appSettingsFlow.first()
@@ -96,14 +97,31 @@ class DrivingService : Service() {
         }
     }
 
+    /**
+     * The trigger setting is a pipe-separated list of name fragments,
+     * e.g. "ford|car box|chev" (case-insensitive substring match).
+     */
+    private fun triggerMatches(pattern: String, name: String?): Boolean {
+        if (name == null || pattern.isBlank()) return false
+        return pattern.split('|').any { token ->
+            token.isNotBlank() && name.contains(token.trim(), ignoreCase = true)
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    private fun isDeviceConnected(deviceName: String): Boolean {
+    private fun isDeviceConnected(triggerPattern: String): Boolean {
         // Check if Bluetooth is enabled
-        if (!bluetoothAdapter.isEnabled) {
+        if (!bluetoothAdapter.isEnabled || triggerPattern.isBlank()) {
             return false
         }
-        val pairedDevices: Set<BluetoothDevice>? = bluetoothAdapter.bondedDevices
-        return pairedDevices?.any { it.name == deviceName && it.bondState == BluetoothDevice.BOND_BONDED && isConnected(it) } ?: false
+        val pairedDevices: Set<BluetoothDevice>? = try {
+            bluetoothAdapter.bondedDevices
+        } catch (_: SecurityException) {
+            null
+        }
+        return pairedDevices?.any {
+            it.bondState == BluetoothDevice.BOND_BONDED && triggerMatches(triggerPattern, it.name) && isConnected(it)
+        } ?: false
     }
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
@@ -119,7 +137,7 @@ class DrivingService : Service() {
 
             serviceScope.launch {
                 val settings = appSettingsRepository.appSettingsFlow.first()
-                if (device?.name == settings.bluetoothDeviceName) {
+                if (triggerMatches(settings.bluetoothDeviceName, device?.name)) {
                     DrivingStatus.isConnected.value = action == BluetoothDevice.ACTION_ACL_CONNECTED
                     if (action == BluetoothDevice.ACTION_ACL_CONNECTED) {
                         startLogging(settings)
@@ -206,6 +224,16 @@ class DrivingService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun startLogging(settings: AppSettings) {
+        if (DrivingStatus.isLogging.value) return
+        if (settings.tempLocationUri.isEmpty()) {
+            // No journal location = no logging at all (requirement: nothing may run unlogged)
+            Log.w("DrivingService", "Not logging: temporary storage location is not set")
+            return
+        }
+        if (!settings.gpsEnabled && !settings.obdEnabled) {
+            Log.w("DrivingService", "Not logging: neither GPS nor OBD is enabled")
+            return
+        }
         Log.d("DrivingService", "Started logging")
         DrivingStatus.isLogging.value = true
 
@@ -216,8 +244,10 @@ class DrivingService : Service() {
         notificationManager.notify(notificationManager.notificationID(), notification)
 
         createJournal(settings)
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, settings.loggingFrequency * 1000L).build()
-        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+        if (settings.gpsEnabled) {
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, settings.loggingFrequency * 1000L).build()
+            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+        }
 
         startObdPolling(settings)
     }
@@ -341,7 +371,7 @@ class DrivingService : Service() {
             return
         }
         obdJob?.cancel()
-        val connector = ObdDeviceConnector(this)
+        val connector = obdConnector
         obdJob = serviceScope.launch {
             var backoffMs = 2_000L
             while (isActive) {
@@ -352,6 +382,7 @@ class DrivingService : Service() {
                     var device = connector.resolve(settings.obdDeviceName)
                     if (device == null) {
                         device = connector.scanFor(settings.obdDeviceName)
+                        if (device != null) connector.remember(device)
                     }
                     if (device == null) {
                         Log.d("DrivingService", "OBD adapter '${settings.obdDeviceName}' not found; will retry")

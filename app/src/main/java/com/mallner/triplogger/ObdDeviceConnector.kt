@@ -42,10 +42,18 @@ class ObdDeviceConnector(private val context: Context) {
 
     fun looksLikeObdAdapter(name: String?): Boolean = name != null && OBD_NAME_REGEX.containsMatchIn(name)
 
-    /** Bonded devices and anything currently connected, matching the configured name exactly. */
+    private val discovered = HashMap<String, BluetoothDevice>()
+
+    /** Remember devices found by scan so reconnects do not need to re-scan. */
+    fun remember(device: BluetoothDevice) {
+        device.name?.let { discovered[it] = device }
+    }
+
+    /** Bonded or previously discovered device matching the configured name exactly. */
     @SuppressLint("MissingPermission")
     fun resolve(name: String): BluetoothDevice? {
         if (name.isBlank() || adapter == null) return null
+        discovered[name]?.let { return it }
         return try {
             adapter.bondedDevices.firstOrNull { it.name == name }
         } catch (_: SecurityException) {
@@ -58,7 +66,11 @@ class ObdDeviceConnector(private val context: Context) {
      * the timeout elapses. Used by the Settings screen to offer adapter choices.
      */
     @SuppressLint("MissingPermission")
-    suspend fun scanUntil(predicate: (String?) -> Boolean, timeoutMs: Long = SCAN_TIMEOUT_MS): List<BluetoothDevice> {
+    suspend fun scanUntil(
+        predicate: (String?) -> Boolean,
+        timeoutMs: Long = SCAN_TIMEOUT_MS,
+        onDeviceFound: (BluetoothDevice) -> Unit = {}
+    ): List<BluetoothDevice> {
         val bt = adapter ?: return emptyList()
         if (!bt.isEnabled) return emptyList()
 
@@ -70,7 +82,7 @@ class ObdDeviceConnector(private val context: Context) {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val device: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 if (device != null && predicate(device.name)) {
-                    found[device.address] = device
+                    if (found.put(device.address, device) == null) onDeviceFound(device)
                 }
             }
         }

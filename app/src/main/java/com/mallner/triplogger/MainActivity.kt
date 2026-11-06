@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -158,10 +159,12 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
 
     // Use LaunchedEffect to start the service based on the initial appSettings state
     LaunchedEffect(key1 = appSettings.serviceEnabled, key2 = permissionsGranted) {
-        if (appSettings.serviceEnabled && permissionsGranted) {
+        if (appSettings.serviceEnabled && permissionsGranted && appSettings.tempLocationUri.isNotEmpty()) {
             context.startService(Intent(context, DrivingService::class.java))
         }
     }
+
+    val tempLocationMissing = appSettings.tempLocationUri.isEmpty()
 
     Column(modifier = modifier.padding(16.dp)) {
         if (permissionsGranted) {
@@ -173,7 +176,8 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     text = "Service Enabled"
                 )
                 Switch(
-                    checked = appSettings.serviceEnabled,
+                    checked = appSettings.serviceEnabled && !tempLocationMissing,
+                    enabled = !tempLocationMissing,
                     onCheckedChange = { enabled ->
                         coroutineScope.launch {
                             appSettingsRepository.updateServiceEnabled(enabled)
@@ -184,6 +188,13 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                             }
                         }
                     }
+                )
+            }
+            if (tempLocationMissing) {
+                Text(
+                    text = "Choose a Temporary Storage Location in Settings to enable logging.",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp
                 )
             }
             Row {
@@ -229,7 +240,13 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
                 )
-                Text("Adapter Connected: $obdConnected")
+                if (!serviceEnabled) {
+                    Text("Adapter Connected: (not watching, service disabled)")
+                } else if (obdConnected) {
+                    Text("Adapter Connected: true")
+                } else {
+                    Text("Adapter Connected: false")
+                }
                 if (obdConnected) {
                     val speedMph = obdValues["0D"]?.let { String.format("%.0f", it * 0.621371) }
                     val rpm = obdValues["0C"]?.toInt()
@@ -248,8 +265,8 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     if (extras.isNotEmpty()) {
                         Text(extras)
                     }
-                } else {
-                    Text("Connecting to adapter… (make sure the car is on)")
+                } else if (serviceEnabled) {
+                    Text("Trying to connect - is the car powered on?")
                 }
             }
         } else {

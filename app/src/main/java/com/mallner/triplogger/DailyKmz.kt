@@ -8,10 +8,16 @@ import java.util.zip.ZipOutputStream
 
 /** Draws the per-trip speed plot PNG. Dataset1 = OBD speed (red), Dataset2 = GPS speed (blue). */
 interface PlotRenderer {
-    fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
+    /**
+     * @param speedUnit    label unit for the y axis ("mph" or "km/h")
+     * @param tzOffsetMin  minutes east of UTC for the "HH:mm" axis labels
+     * @param tzChanges    time + new "+hh:mm" offset at each time zone/DST change to
+     *                     mark with a dashed vertical gridline (may be empty)
+     */
+    fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
 }
 
-data class TrackPoint(val gpsTimeMs: Long, val lon: Double, val lat: Double, val alt: Double)
+data class TrackPoint(val gpsTimeMs: Long, val lon: Double, val lat: Double, val alt: Double, val tzOffsetMin: Int? = null)
 
 data class TripTrack(
     /** Unique id embedded in the KML ("yyyy-MM-dd HH:mm:ss"), used to make merging idempotent. */
@@ -20,7 +26,11 @@ data class TripTrack(
     val speedUnit: String,       // display unit of the speed series ("mph" or "km/h")
     val points: List<TrackPoint>,
     val obdSpeeds: List<Pair<Long, Float>>,
-    val gpsSpeeds: List<Pair<Long, Float>>
+    val gpsSpeeds: List<Pair<Long, Float>>,
+    /** Offset changes during the trip (time, new "+hh:mm" label) for the plot. */
+    val tzChanges: List<Pair<Long, String>> = emptyList(),
+    /** Minutes east of UTC the trip started in (plot axis labels). */
+    val tzOffsetMin: Int? = null
 )
 
 /**
@@ -28,9 +38,12 @@ data class TripTrack(
  * Python TorqueLogs converter produces: one "<date>.kml" document with one
  * gx:Track placemark per trip plus one "<label>.png" speed plot per trip.
  *
- * Daily files accumulate trips: merging appends new placemarks into the
- * existing KML and copies the existing PNGs across. Color assignment continues
- * the converter's ColorList cycle based on how many placemarks already exist.
+ * Daily files accumulate trips. Re-processing a trip (crash recovery, rebuild
+ * from archive) *replaces* the placemark with the same gx:Track id instead of
+ * appending a duplicate, and its "<label>.png" entry is overwritten, so the
+ * regenerated trip wins while every other trip in the day is untouched. Color
+ * assignment continues the converter's ColorList cycle based on how many
+ * placemarks already exist.
  */
 class DailyKmz(
     val colorList: List<String> = DEFAULT_COLORS,
@@ -60,7 +73,7 @@ class DailyKmz(
             sb.append("    <gx:Track id=\"" + trackId + "\">\n")
             sb.append("      <altitudeMode>clampToGround</altitudeMode>\n")
             for (p in points) {
-                sb.append("      <when>" + TripFormats.kmlWhen(p.gpsTimeMs) + "</when>\n")
+                sb.append("      <when>" + TripFormats.kmlWhen(p.gpsTimeMs, p.tzOffsetMin) + "</when>\n")
                 sb.append("      <gx:coord>" + dtostr(p.lon) + " " + dtostr(p.lat) + " " + dtostr(p.alt) + "</gx:coord>\n")
             }
             sb.append("    </gx:Track>\n")
@@ -89,6 +102,23 @@ class DailyKmz(
     }
 
     /**
+     * Character range of the `<Placemark>` holding `gx:Track id="<trackId>"`,
+     * including its trailing newline; null when the trip is not in the document.
+     * Placemarks without an id (e.g. written by the old Python converter) can
+     * never match, so they are only ever appended after, never replaced.
+     */
+    private fun findPlacemarkRange(kml: String, trackId: String): Pair<Int, Int>? {
+        val marker = kml.indexOf("gx:Track id=\"$trackId\"")
+        if (marker < 0) return null
+        val start = kml.lastIndexOf("<Placemark", marker)
+        val close = kml.indexOf("</Placemark>", marker)
+        if (start < 0 || close < 0) return null
+        var end = close + "</Placemark>".length
+        if (kml.getOrNull(end) == '\n') end++
+        return Pair(start, end)
+    }
+
+    /**
      * @param existingKmz current contents of the day's file, or null when none exists yet
      * @param dayLabel    "yyyy-MM-dd" - also the KML entry name stem
      * @return the new KMZ bytes
@@ -113,23 +143,32 @@ class DailyKmz(
 
         var kml = existingKml
         var placemarkCount = existingKml?.let { Regex("<Placemark>").findAll(it).count() } ?: 0
-        val skipIds = existingKml?.let { Regex("gx:Track id=\"([^\"]+)\"").findAll(it).map { m -> m.groupValues[1] }.toSet() } ?: emptySet()
 
         for (trip in trips) {
-            if (trip.trackId in skipIds) continue  // already merged (recovery/idempotency)
             if (trip.points.isEmpty() && trip.obdSpeeds.isEmpty() && trip.gpsSpeeds.isEmpty()) continue
-            val color = colorList[placemarkCount % colorList.size]
-            val placemark = placemarkXml(trip.label, trip.trackId, color, trip.points)
-            kml = if (kml == null) {
-                KML_HEADER + placemark + KML_FOOTER
+            val png = renderer.renderPng(trip.label, trip.speedUnit, trip.tzOffsetMin, trip.tzChanges, trip.obdSpeeds, trip.gpsSpeeds)
+            val existing = kml?.let { findPlacemarkRange(it, trip.trackId) }
+            if (kml != null && existing != null) {
+                // Re-processing the same trip (recovery / rebuild): replace its
+                // placemark, keeping the color it was first drawn with.
+                val block = kml.substring(existing.first, existing.second)
+                val color = Regex("<color>([0-9A-Fa-f]+)</color>").find(block)?.groupValues?.get(1)
+                    ?: colorList[placemarkCount % colorList.size]
+                kml = kml.substring(0, existing.first) +
+                    placemarkXml(trip.label, trip.trackId, color, trip.points) +
+                    kml.substring(existing.second)
             } else {
-                val idx = kml.lastIndexOf("</Document>")
-                if (idx < 0) KML_HEADER + placemark + KML_FOOTER
-                else kml.substring(0, idx) + placemark + KML_FOOTER
+                val color = colorList[placemarkCount % colorList.size]
+                val placemark = placemarkXml(trip.label, trip.trackId, color, trip.points)
+                kml = if (kml == null) {
+                    KML_HEADER + placemark + KML_FOOTER
+                } else {
+                    val idx = kml.lastIndexOf("</Document>")
+                    if (idx < 0) KML_HEADER + placemark + KML_FOOTER
+                    else kml.substring(0, idx) + placemark + KML_FOOTER
+                }
+                placemarkCount++
             }
-            placemarkCount++
-
-            val png = renderer.renderPng(trip.label, trip.speedUnit, trip.obdSpeeds, trip.gpsSpeeds)
             existingEntries["${trip.label}.png"] = png
         }
 

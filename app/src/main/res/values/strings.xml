@@ -62,6 +62,18 @@
     <!-- Home: OBD tile -->
     <string name="obd_tile_title">OBD-II</string>
     <string name="obd_gauge_rpm">RPM</string>
+    <string name="obd_gauge_speed_value">%1$.0f</string>
+
+    <!-- Settings: OBD indicators + gauges -->
+    <string name="obd_show_hybrid_charge">Show hybrid battery charge</string>
+    <string name="obd_show_fuel_level">Show fuel level</string>
+    <string name="obd_show_hybrid_charge_caption">Battery icon on the OBD-II card (PID 5B)</string>
+    <string name="obd_show_fuel_level_caption">Fuel pump icon on the OBD-II card (PID 2F)</string>
+    <string name="obd_indicator_percent">%1$.0f%%</string>
+    <string name="obd_indicator_none">--</string>
+    <string name="settings_section_gauges">Gauges</string>
+    <string name="settings_speed_gauge_max">Speedometer Max (%1$s)</string>
+    <string name="settings_rpm_gauge_max">Tachometer Max (rpm)</string>
 
     <!-- Settings: units -->
     <string name="settings_section_units">Units</string>

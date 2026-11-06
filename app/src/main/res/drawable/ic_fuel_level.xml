@@ -1,0 +1,18 @@
+<!-- Small "fuel level" glyph (fuel pump). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M5,4.5h9c0.83,0 1.5,0.67 1.5,1.5v13.5h-13.5v-13.5c0,-0.83 0.67,-1.5 1.5,-1.5z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8" />
+    <path
+        android:pathData="M6.2,7h6.2v3.6h-6.2z"
+        android:fillColor="#FF000000" />
+    <path
+        android:pathData="M16.5,10.5h2.3c0.61,0 1.1,0.49 1.1,1.1v4.9c0,0.86 0.7,1.55 1.55,1.55s1.55,-0.69 1.55,-1.55v-5.9"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.6" />
+</vector>

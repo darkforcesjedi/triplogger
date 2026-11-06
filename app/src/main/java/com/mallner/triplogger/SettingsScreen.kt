@@ -31,6 +31,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Settings screen layout (progressive disclosure: child options appear only
@@ -175,6 +177,36 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             Button(onClick = { showPidDialog = true }) {
                 Text(stringResource(R.string.settings_sensors_button, appSettings.obdSelectedPids.size))
             }
+            ToggleRow(
+                label = stringResource(R.string.obd_show_hybrid_charge),
+                caption = stringResource(R.string.obd_show_hybrid_charge_caption),
+                checked = appSettings.showHybridCharge,
+                onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateShowHybridCharge(on) } }
+            )
+            ToggleRow(
+                label = stringResource(R.string.obd_show_fuel_level),
+                caption = stringResource(R.string.obd_show_fuel_level_caption),
+                checked = appSettings.showFuelLevel,
+                onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateShowFuelLevel(on) } }
+            )
+            SectionHeader(stringResource(R.string.settings_section_gauges))
+            val speedUnit = stringResource(if (appSettings.usUnits) R.string.unit_mph else R.string.unit_kph)
+            GaugeSliderRow(
+                label = stringResource(R.string.settings_speed_gauge_max, speedUnit),
+                value = if (appSettings.usUnits) appSettings.speedGaugeMaxUs else appSettings.speedGaugeMaxMetric,
+                valueRange = if (appSettings.usUnits) 10..200 else 10..350,
+                step = 5,
+                suffix = speedUnit,
+                onValueChange = { v -> coroutineScope.launch { appSettingsRepository.updateSpeedGaugeMax(appSettings.usUnits, v) } }
+            )
+            GaugeSliderRow(
+                label = stringResource(R.string.settings_rpm_gauge_max),
+                value = appSettings.rpmGaugeMax,
+                valueRange = 1000..15000,
+                step = 500,
+                suffix = "rpm",
+                onValueChange = { v -> coroutineScope.launch { appSettingsRepository.updateRpmGaugeMax(v) } }
+            )
         }
 
         // ---------------------------------------------------------------- Units
@@ -347,6 +379,40 @@ private fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(bottom = 8.dp)
     )
+}
+
+/** Slider for an integer gauge maximum, snapped to `step`; value shown at the end. */
+@Composable
+private fun GaugeSliderRow(
+    label: String,
+    value: Int,
+    valueRange: IntRange,
+    step: Int,
+    suffix: String,
+    onValueChange: (Int) -> Unit
+) {
+    val steps = ((valueRange.last - valueRange.first) / step - 1).coerceAtLeast(0)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(label, fontSize = 16.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = "$value $suffix",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Slider(
+            value = value.toFloat().coerceIn(valueRange.first.toFloat(), valueRange.last.toFloat()),
+            onValueChange = { raw -> onValueChange((raw / step).roundToInt() * step) },
+            valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
+            steps = steps
+        )
+    }
 }
 
 /** Single-select unit system row (radio + label). */

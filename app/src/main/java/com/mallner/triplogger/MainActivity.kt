@@ -301,6 +301,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             Spacer(modifier = Modifier.height(20.dp))
             StatusTile(title = stringResource(R.string.gps_tile_title), light = gpsLight, statusText = gpsStatus) {
                 if (location != null) {
+                    val us = appSettings.usUnits
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(location.time))
                     StatusLine(stringResource(R.string.gps_last_fix), time)
                     StatusLine(
@@ -309,7 +310,11 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     )
                     StatusLine(
                         stringResource(R.string.gps_speed),
-                        stringResource(R.string.gps_speed_value, location.speed * 2.23694f)
+                        stringResource(
+                            R.string.gps_speed_value,
+                            String.format(Locale.getDefault(), "%.1f", UnitFormat.mpsToDisplay(location.speed.toDouble(), us)),
+                            stringResource(if (us) R.string.unit_mph else R.string.unit_kph)
+                        )
                     )
                     if (location.hasAccuracy()) {
                         StatusLine(stringResource(R.string.gps_accuracy), stringResource(R.string.gps_accuracy_value, location.accuracy))
@@ -337,7 +342,9 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             }
             Spacer(modifier = Modifier.height(20.dp))
             StatusTile(title = stringResource(R.string.obd_tile_title), light = obdLight, statusText = obdStatus) {
-                val speedMph = if (connected) obdValues["0D"]?.let { it * TripFormats.KMH_TO_MPH } else null
+                val speedUnit = stringResource(if (appSettings.usUnits) R.string.unit_mph else R.string.unit_kph)
+                val speedMax = if (appSettings.usUnits) 160.0 else 260.0
+                val speedMph = if (connected) obdValues["0D"]?.let { UnitFormat.convert("km/h", it, appSettings.usUnits).first } else null
                 val rpm = if (connected) obdValues["0C"] else null
                 Row(
                     modifier = Modifier
@@ -345,7 +352,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                         .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    Gauge(label = stringResource(R.string.obd_gauge_mph), value = speedMph, maxValue = 160.0, color = Color(0xFF1464FF))
+                    Gauge(label = speedUnit.uppercase(), value = speedMph, maxValue = speedMax, color = Color(0xFF1464FF))
                     Gauge(label = stringResource(R.string.obd_gauge_rpm), value = rpm, maxValue = 7000.0, color = Color(0xFFE53935))
                 }
             }

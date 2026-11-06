@@ -31,17 +31,18 @@ data class ObdRow(
  * the layout:
  *
  *   <root>/pending/<tripId>/trip.properties, gps-000.csv, obd-000.csv, ...   (recording)
- *   <root>/success/<tripId>/...                                               (converted)
- *   <root>/failed/<tripId>/...                                                (conversion error)
+ *   <root>/archive/<tripId>/...                                              (converted, raw record kept)
+ *   <root>/failed/<tripId>/...                                               (conversion error)
  *
  * Journals are appended while driving. When a segment grows past the configured
  * max size it is split: recording continues in gps-001.csv/obd-001.csv etc.
  * Splitting is transparent to the trip - all segments are concatenated again
  * during conversion and the trip produces one KMZ track / ODS sheet.
  *
- * When a trip completes it is converted and relocated to success/ or failed/.
+ * When a trip completes it is converted and relocated to archive/ or failed/.
  * Whatever is still in pending/ when the service starts is an interrupted trip
- * and gets recovered (finalized) automatically.
+ * and gets recovered (finalized) automatically. The archive is the raw-data
+ * record: "Rebuild logs from archive" re-converts it into the output formats.
  */
 interface JournalStore {
     fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal
@@ -49,14 +50,29 @@ interface JournalStore {
     /** Every trip found in pending/ and failed/, oldest first. */
     fun unfinishedTrips(): List<OrphanTrip>
 
-    /** Move a trip directory into the success/ or failed/ subfolder. */
-    fun relocate(trip: OrphanTrip, toSuccess: Boolean)
+    /** Every successfully archived trip, oldest first. */
+    fun archivedTrips(): List<OrphanTrip>
+
+    /** Move a trip directory into the archive/ or failed/ subfolder. */
+    fun relocate(trip: OrphanTrip, toArchive: Boolean)
 
     /** Remove a trip directory entirely (empty journals only). */
     fun delete(trip: OrphanTrip)
 
     /** Handle for reading back a journal that was just closed (same directory). */
     fun orphanOf(journal: LiveJournal): OrphanTrip
+}
+
+/**
+ * Retention policy applied to archived trip journals on service start.
+ * Both rules are off when their threshold is 0.
+ */
+data class ArchivePolicy(val retentionDays: Int, val minTripSec: Int) {
+    fun shouldDelete(startMs: Long, durationMs: Long, nowMs: Long): Boolean {
+        if (retentionDays > 0 && startMs > 0 && nowMs - startMs > retentionDays * 86_400_000L) return true
+        if (minTripSec > 0 && durationMs < minTripSec * 1000L) return true
+        return false
+    }
 }
 
 /** A journal being written to while recording. */
@@ -182,6 +198,29 @@ abstract class OrphanTrip(val name: String) {
 
     fun startMs(): Long = readProps()["start_ms"]?.toLongOrNull() ?: 0L
 
+    /** Span of the recorded data (first to last sample), 0 when unknown. */
+    fun durationMs(): Long {
+        var min = Long.MAX_VALUE
+        var max = 0L
+        for (segment in segments("gps")) {
+            val text = readText(segment) ?: continue
+            for (line in text.lineSequence().drop(1)) {
+                val ts = line.substringBefore(',').toLongOrNull() ?: continue
+                if (ts in 1 until min) min = ts
+                if (ts > max) max = ts
+            }
+        }
+        for (segment in segments("obd")) {
+            val text = readText(segment) ?: continue
+            for (line in text.lineSequence().drop(1)) {
+                val ts = line.substringBefore(',').toLongOrNull() ?: continue
+                if (ts in 1 until min) min = ts
+                if (ts > max) max = ts
+            }
+        }
+        return if (min == Long.MAX_VALUE || max <= min) 0L else max - min
+    }
+
     /** Segment file names in write order, including the legacy single-file names. */
     protected fun segments(prefix: String): List<String> =
         listFileNames()
@@ -268,8 +307,14 @@ internal fun parseObdLine(line: String, pids: List<String>): ObdRow? = try {
 class FileJournalStore(private val root: File) : JournalStore {
 
     private val pendingRoot get() = File(root, "pending").apply { mkdirs() }
-    private val successRoot get() = File(root, "success").apply { mkdirs() }
     private val failedRoot get() = File(root, "failed").apply { mkdirs() }
+
+    private fun archiveRoot(): File {
+        val archive = File(root, ARCHIVE_NAME)
+        val legacy = File(root, "success")
+        if (legacy.exists() && !archive.exists()) legacy.renameTo(archive)
+        return archive.apply { mkdirs() }
+    }
 
     override fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal {
         val dir = File(pendingRoot, tripId)
@@ -299,9 +344,19 @@ class FileJournalStore(private val root: File) : JournalStore {
         return trips
     }
 
-    override fun relocate(trip: OrphanTrip, toSuccess: Boolean) {
+    override fun archivedTrips(): List<OrphanTrip> =
+        archiveRoot().listFiles { f -> f.isDirectory && (File(f, "trip.properties").isFile || File(f, "trip.properties.txt").isFile) }
+            ?.sortedBy { it.name }
+            ?.map { FileOrphanTrip(it) as OrphanTrip }
+            ?: emptyList()
+
+    override fun relocate(trip: OrphanTrip, toArchive: Boolean) {
         val source = (trip as FileOrphanTrip).dir
-        val target = File(if (toSuccess) successRoot else failedRoot, source.name)
+        if (!source.listFiles().orEmpty().any { it.isFile }) {
+            source.deleteRecursively()
+            return
+        }
+        val target = File(if (toArchive) archiveRoot() else failedRoot, source.name)
         if (target.exists()) target.deleteRecursively()
         source.copyRecursively(target, overwrite = true)
         source.deleteRecursively()
@@ -323,6 +378,9 @@ class FileOrphanTrip(val dir: File) : OrphanTrip(dir.name) {
 }
 
 internal fun segmentName(prefix: String, index: Int): String = "$prefix-%03d.csv".format(index)
+
+/** Subfolder holding successfully converted trip journals (formerly "success"). */
+internal const val ARCHIVE_NAME = "archive"
 
 /** Buffered row writer that flushes every line so little is lost on a crash. */
 private class RowWriter(private val stream: OutputStream) {

@@ -33,7 +33,13 @@ data class AppSettings(
     /** Separate user-selectable folders (fall back to storageLocationUri / app storage) */
     val tempLocationUri: String = "",
     val kmzLocationUri: String = "",
-    val odsLocationUri: String = ""
+    val odsLocationUri: String = "",
+    /** Display/export units: true = US customary (mph, °F, psi), false = metric */
+    val usUnits: Boolean = true,
+    /** Delete archived trip journals older than N days (0 = keep forever) */
+    val archiveRetentionDays: Int = 0,
+    /** Delete archived trip journals shorter than N seconds (0 = keep all) */
+    val archiveMinTripSec: Int = 0
 )
 
 object AppSettingsKeys {
@@ -54,6 +60,9 @@ object AppSettingsKeys {
     val TEMP_LOCATION_URI = stringPreferencesKey("temp_location_uri")
     val KMZ_LOCATION_URI = stringPreferencesKey("kmz_location_uri")
     val ODS_LOCATION_URI = stringPreferencesKey("ods_location_uri")
+    val US_UNITS = booleanPreferencesKey("us_units")
+    val ARCHIVE_RETENTION_DAYS = intPreferencesKey("archive_retention_days")
+    val ARCHIVE_MIN_TRIP_SEC = intPreferencesKey("archive_min_trip_sec")
 }
 
 class AppSettingsRepository(private val context: Context) {
@@ -164,6 +173,24 @@ class AppSettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun updateUsUnits(us: Boolean) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.US_UNITS] = us
+        }
+    }
+
+    suspend fun updateArchiveRetentionDays(days: Int) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] = days.coerceIn(0, 3650)
+        }
+    }
+
+    suspend fun updateArchiveMinTripSec(seconds: Int) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] = seconds.coerceIn(0, 86_400)
+        }
+    }
+
     private fun mapAppSettings(preferences: Preferences): AppSettings {
         val bluetoothDeviceName = preferences[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] ?: ""
         val loggingFrequency = preferences[AppSettingsKeys.LOGGING_FREQUENCY] ?: 10
@@ -184,10 +211,13 @@ class AppSettingsRepository(private val context: Context) {
         val tempLocationUri = preferences[AppSettingsKeys.TEMP_LOCATION_URI] ?: ""
         val kmzLocationUri = preferences[AppSettingsKeys.KMZ_LOCATION_URI] ?: ""
         val odsLocationUri = preferences[AppSettingsKeys.ODS_LOCATION_URI] ?: ""
+        val usUnits = preferences[AppSettingsKeys.US_UNITS] ?: true
+        val archiveRetentionDays = preferences[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] ?: 0
+        val archiveMinTripSec = preferences[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] ?: 0
         return AppSettings(
             bluetoothDeviceName, loggingFrequency, splitEnabled, maxSegmentSizeKb, forceLogging, storageLocationUri, serviceEnabled,
             gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
-            tempLocationUri, kmzLocationUri, odsLocationUri
+            tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, archiveRetentionDays, archiveMinTripSec
         )
     }
 }

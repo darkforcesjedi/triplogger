@@ -17,7 +17,7 @@ import kotlin.math.min
 /**
  * Android/Canvas port of imagegen.CreatePlot from the TorqueLogs converter:
  * 200 px per minute of log time (capped at 38400 px wide), 720 px tall,
- * white background, gray grid in 10 mph / 60 s steps, red dots = OBD speed,
+ * white background, gray grid in 10 mph (or 20 km/h) / 60 s steps, red dots = OBD speed,
  * blue dots = GPS speed, FreeSans 24 px labels.
  */
 class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
@@ -39,23 +39,23 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
         }
     }
 
-    override fun renderPng(label: String, obdSpeedsMph: List<Pair<Long, Float>>, gpsSpeedsMph: List<Pair<Long, Float>>): ByteArray {
+    override fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
         var minx = Double.MAX_VALUE
         var maxx = -Double.MAX_VALUE
-        if (obdSpeedsMph.isNotEmpty()) {
-            minx = obdSpeedsMph.first().first / 1000.0
-            maxx = obdSpeedsMph.last().first / 1000.0
+        if (obdSpeeds.isNotEmpty()) {
+            minx = obdSpeeds.first().first / 1000.0
+            maxx = obdSpeeds.last().first / 1000.0
         }
-        if (gpsSpeedsMph.isNotEmpty()) {
-            minx = min(minx, gpsSpeedsMph.first().first / 1000.0)
-            maxx = max(maxx, gpsSpeedsMph.last().first / 1000.0)
+        if (gpsSpeeds.isNotEmpty()) {
+            minx = min(minx, gpsSpeeds.first().first / 1000.0)
+            maxx = max(maxx, gpsSpeeds.last().first / 1000.0)
         }
         if (minx > maxx) return ByteArray(0)
 
         var maxy = -Double.MAX_VALUE
         var found = false
-        for ((_, s) in obdSpeedsMph) if (!s.isNaN()) { maxy = max(maxy, s.toDouble()); found = true }
-        for ((_, s) in gpsSpeedsMph) if (!s.isNaN()) { maxy = max(maxy, s.toDouble()); found = true }
+        for ((_, s) in obdSpeeds) if (!s.isNaN()) { maxy = max(maxy, s.toDouble()); found = true }
+        for ((_, s) in gpsSpeeds) if (!s.isNaN()) { maxy = max(maxy, s.toDouble()); found = true }
         if (!found) return ByteArray(0)
 
         val miny = 0.0
@@ -70,7 +70,8 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
         val scaleX = w / (maxx - minx)
         val scaleY = h / (maxy - miny)
         val gridX = 60 * scaleX
-        val gridY = 10 * scaleY
+        val speedStep = if (speedUnit == "km/h") 20.0 else 10.0  // keep gridline density similar
+        val gridY = speedStep * scaleY
 
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
         try {
@@ -94,16 +95,16 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
 
             val bounds = Rect()
 
-            // Horizontal grid lines + mph labels
+            // Horizontal grid lines + speed labels
             var ypos = h - gridY
-            var mph = -10.0
+            var speed = -speedStep
             while (ypos > 0) {
-                mph = (h - ypos) / scaleY + miny
+                speed = (h - ypos) / scaleY + miny
                 canvas.drawLine(0f, ypos.toFloat(), w.toFloat(), ypos.toFloat(), gridPaint)
-                drawTopLeftText(canvas, String.format("%.0f", mph), 1f, (ypos + 1).toFloat(), textPaint)
+                drawTopLeftText(canvas, String.format("%.0f", speed), 1f, (ypos + 1).toFloat(), textPaint)
                 ypos -= gridY
             }
-            if (maxy - mph > 2) {
+            if (maxy - speed > 2) {
                 drawTopLeftText(canvas, String.format("%.0f", maxy), 1f, 1f, textPaint)
             }
 
@@ -135,13 +136,13 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
                 color = Color.BLUE
                 style = Paint.Style.FILL
             }
-            for ((ts, spd) in obdSpeedsMph) {
+            for ((ts, spd) in obdSpeeds) {
                 if (spd.isNaN()) continue
                 val x = ((ts / 1000.0 - minx) * scaleX).toFloat()
                 val y = (h - (spd - miny) * scaleY).toFloat()
                 canvas.drawCircle(x, y, 3f, redPaint)
             }
-            for ((ts, spd) in gpsSpeedsMph) {
+            for ((ts, spd) in gpsSpeeds) {
                 if (spd.isNaN()) continue
                 val x = ((ts / 1000.0 - minx) * scaleX).toFloat()
                 val y = (h - (spd - miny) * scaleY).toFloat()

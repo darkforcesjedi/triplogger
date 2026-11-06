@@ -26,6 +26,22 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
     private fun subDir(name: String): DocumentFile =
         root.findFile(name) ?: root.createDirectory(name) ?: throw IOException("Cannot create $name in journal tree")
 
+    /** Archive folder, migrating the legacy "success/" name on first use. */
+    private fun archiveDir(): DocumentFile {
+        root.findFile(ARCHIVE_NAME)?.let { return it }
+        val legacy = root.findFile("success")
+        if (legacy != null) {
+            val renamed = android.provider.DocumentsContract.renameDocument(
+                context.contentResolver, legacy.uri, ARCHIVE_NAME
+            )
+            if (renamed != null) {
+                DocumentFile.fromTreeUri(context, renamed)?.let { return it }
+            }
+            return legacy // rename unsupported by this provider; keep using success/
+        }
+        return subDir(ARCHIVE_NAME)
+    }
+
     override fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal {
         val pending = subDir("pending")
         pending.findFile(tripId)?.delete()
@@ -76,14 +92,20 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
     private fun hasProps(dir: DocumentFile): Boolean =
         dir.findFile("trip.properties") != null || dir.findFile("trip.properties.txt") != null
 
-    override fun relocate(trip: OrphanTrip, toSuccess: Boolean) {
+    override fun archivedTrips(): List<OrphanTrip> =
+        archiveDir().listFiles()
+            .filter { it.isDirectory && hasProps(it) }
+            .sortedBy { it.name }
+            .map { SafOrphanTrip(context, it) as OrphanTrip }
+
+    override fun relocate(trip: OrphanTrip, toArchive: Boolean) {
         val source = (trip as SafOrphanTrip).dir
         val files = source.listFiles().filter { it.isFile }
         if (files.isEmpty()) {
             source.delete() // nothing to archive; drop the empty source directory
             return
         }
-        val targetParent = subDir(if (toSuccess) "success" else "failed")
+        val targetParent = if (toArchive) archiveDir() else subDir("failed")
         targetParent.findFile(source.name ?: "trip")?.delete()
         val target = targetParent.createDirectory(source.name ?: "trip")
             ?: throw IOException("Cannot create target directory for relocation")

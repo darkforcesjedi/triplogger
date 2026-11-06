@@ -13,7 +13,9 @@ package com.mallner.triplogger
 data class FinalizeSettings(
     val pidHexes: List<String>,
     val generateKmz: Boolean,
-    val saveOds: Boolean
+    val saveOds: Boolean,
+    /** Convert speed/temperature/pressure/distance outputs to US customary. */
+    val usUnits: Boolean = true
 )
 
 sealed class FinalizeResult {
@@ -32,7 +34,10 @@ object TripFinalizer {
         renderer: PlotRenderer
     ): FinalizeResult {
         return try {
-            val pids = settings.pidHexes.ifEmpty { trip.pids() }
+            // The OBD CSV columns are positional and were written with the PID list the
+            // trip recorded, so parse with that list - the current settings selection
+            // can differ (changed sensors, rebuilt archive) and would misalign columns.
+            val pids = trip.pids().ifEmpty { settings.pidHexes }
             val gpsRows = trip.readGpsRows()
             val obdRows = trip.readObdRows(pids)
             val startMs = (gpsRows.minOfOrNull { it.ts } ?: 0L).takeIf { it > 0 } ?: trip.startMs()
@@ -49,12 +54,12 @@ object TripFinalizer {
             var kmzLabel: String? = null
 
             if (settings.saveOds && odsStorage != null) {
-                odsStorage.write("engine-$label.ods", buildOds(obdRows, pids))
+                odsStorage.write("engine-$label.ods", buildOds(obdRows, pids, settings.usUnits))
                 wroteOds = true
             }
 
             if (settings.generateKmz && kmzStorage != null) {
-                val tripTrack = buildTrip(label, trackId, gpsRows, obdRows)
+                val tripTrack = buildTrip(label, trackId, gpsRows, obdRows, settings.usUnits)
                 if (tripTrack != null) {
                     val existing = kmzStorage.read("$dayLabel.kmz")
                     val kmz = DailyKmz(renderer = renderer).merge(existing, dayLabel, listOf(tripTrack))
@@ -74,10 +79,10 @@ object TripFinalizer {
         }
     }
 
-    private fun buildOds(obdRows: List<ObdRow>, pids: List<String>): ByteArray {
+    private fun buildOds(obdRows: List<ObdRow>, pids: List<String>, us: Boolean): ByteArray {
         val headers = mutableListOf("Time", "GPS Time", "Latitude", "Longitude", "Altitude")
         val pidList = pids.mapNotNull { ObdPids.byHex(it) }
-        pidList.forEach { headers.add("${it.name} (${it.unit})") }
+        pidList.forEach { headers.add("${it.name} (${UnitFormat.unitLabel(it.unit, us)})") }
 
         val rows = obdRows.map { row ->
             val cells = mutableListOf<Any?>()
@@ -86,25 +91,28 @@ object TripFinalizer {
             cells.add(row.latitude)
             cells.add(row.longitude)
             cells.add(row.altitude)
-            pidList.forEach { pid -> cells.add(row.values[pid.hex]) }
+            pidList.forEach { pid ->
+                val v = row.values[pid.hex]
+                cells.add(if (v == null) null else UnitFormat.convert(pid.unit, v, us).first)
+            }
             cells
         }
         return OdsExport.build("engine", headers, rows)
     }
 
-    fun buildTrip(label: String, trackId: String, gpsRows: List<GpsRow>, obdRows: List<ObdRow>): TripTrack? {
+    fun buildTrip(label: String, trackId: String, gpsRows: List<GpsRow>, obdRows: List<ObdRow>, us: Boolean = true): TripTrack? {
         val points = gpsRows
             .sortedBy { it.gpsTime }
             .map { TrackPoint(it.gpsTime, it.longitude, it.latitude, if (it.altitude.isNaN()) 0.0 else it.altitude) }
 
         val gpsSpeeds = gpsRows
             .filter { !it.speedMps.isNaN() }
-            .map { Pair(it.gpsTime, it.speedMps * TripFormats.MPS_TO_MPH.toFloat()) }
+            .map { Pair(it.gpsTime, UnitFormat.mpsToDisplay(it.speedMps.toDouble(), us).toFloat()) }
 
         val obdSpeeds = obdRows
-            .mapNotNull { row -> row.values["0D"]?.let { Pair(row.ts, (it * TripFormats.KMH_TO_MPH).toFloat()) } }
+            .mapNotNull { row -> row.values["0D"]?.let { Pair(row.ts, UnitFormat.convert("km/h", it, us).first.toFloat()) } }
 
         if (points.isEmpty() && gpsSpeeds.isEmpty() && obdSpeeds.isEmpty()) return null
-        return TripTrack(trackId, label, points, obdSpeeds, gpsSpeeds)
+        return TripTrack(trackId, label, UnitFormat.speedUnitLabel(us), points, obdSpeeds, gpsSpeeds)
     }
 }

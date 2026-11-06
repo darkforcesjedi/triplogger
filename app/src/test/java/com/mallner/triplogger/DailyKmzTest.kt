@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 object FakePlotRenderer : PlotRenderer {
-    override fun renderPng(label: String, obdSpeedsMph: List<Pair<Long, Float>>, gpsSpeedsMph: List<Pair<Long, Float>>): ByteArray =
+    override fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray =
         "PNG:$label".toByteArray()
 }
 
@@ -20,9 +20,10 @@ class DailyKmzTest {
         return TripTrack(
             trackId = id,
             label = id.replace(':', '.'),
+            speedUnit = "mph",
             points = pts,
-            obdSpeedsMph = listOf(Pair(base, 55f), Pair(base + 5000, 60f)),
-            gpsSpeedsMph = listOf(Pair(base, 54f), Pair(base + 5000, 59f))
+            obdSpeeds = listOf(Pair(base, 55f), Pair(base + 5000, 60f)),
+            gpsSpeeds = listOf(Pair(base, 54f), Pair(base + 5000, 59f))
         )
     }
 

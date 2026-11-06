@@ -110,9 +110,63 @@ class TripFinalizerTest {
         val trip = store.orphanOf(journal)
 
         val result = TripFinalizer.finalize(trip, FinalizeSettings(listOf("0C", "0D"), true, false), DirStorage(tmp.newFolder("kmz")), null, FakePlotRenderer)
-        store.relocate(trip, toSuccess = result is FinalizeResult.Completed)
+        store.relocate(trip, toArchive = result is FinalizeResult.Completed)
 
-        assertTrue(java.io.File(journalRoot, "success/20260119_120000/gps-000.csv").isFile)
+        assertTrue(java.io.File(journalRoot, "archive/20260119_120000/gps-000.csv").isFile)
         assertEquals(0, store.unfinishedTrips().size)
+    }
+
+    private class CaptureRenderer : PlotRenderer {
+        var speedUnit: String = ""
+        var obdSpeeds: List<Pair<Long, Float>> = emptyList()
+        var gpsSpeeds: List<Pair<Long, Float>> = emptyList()
+        override fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
+            this.speedUnit = speedUnit
+            this.obdSpeeds = obdSpeeds
+            this.gpsSpeeds = gpsSpeeds
+            return "PNG:$label".toByteArray()
+        }
+    }
+
+    private fun tripWithSelectedPidOrder(store: JournalStore, selected: List<String>): Pair<LiveJournal, FinalizeSettings> {
+        val journal = store.createTrip("20260119_120000", day1Noon, listOf("0C", "0D"))
+        journal.append(GpsRow(day1Noon, day1Noon, 37.39, -122.08, 40.0, 10f, 0f, 5f))
+        journal.append(ObdRow(day1Noon, day1Noon, 37.39, -122.08, 40.0, mapOf("0C" to 1500.0, "0D" to 45.0)))
+        journal.close()
+        return Pair(journal, FinalizeSettings(selected, generateKmz = true, saveOds = false))
+    }
+
+    @Test
+    fun journalIsParsedWithItsOwnPidOrder() {
+        // OBD rows are positional: even if the settings now list the PIDs swapped,
+        // the trip must be read back with the list it recorded (0C=1500, 0D=45).
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val (journal, settings) = tripWithSelectedPidOrder(store, listOf("0D", "0C"))
+        val renderer = CaptureRenderer()
+        val result = TripFinalizer.finalize(store.orphanOf(journal), settings, DirStorage(tmp.newFolder("kmz")), null, renderer)
+        assertTrue(result is FinalizeResult.Completed)
+        // 45 km/h -> 27.96 mph (a positional mix-up would show ~932 mph from the RPM)
+        assertEquals(27.96, renderer.obdSpeeds.single().second.toDouble(), 0.05)
+    }
+
+    @Test
+    fun exportHonoursSelectedUnits() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val (journal, us) = tripWithSelectedPidOrder(store, listOf("0C", "0D"))
+        val usRenderer = CaptureRenderer()
+        TripFinalizer.finalize(store.orphanOf(journal), us, DirStorage(tmp.newFolder("kmz1")), null, usRenderer)
+        assertEquals("mph", usRenderer.speedUnit)
+        assertEquals(22.37, usRenderer.gpsSpeeds.single().second.toDouble(), 0.02) // 10 m/s
+
+        val (journal2, _) = tripWithSelectedPidOrder(store, listOf("0C", "0D"))
+        val metricRenderer = CaptureRenderer()
+        TripFinalizer.finalize(
+            store.orphanOf(journal2),
+            FinalizeSettings(listOf("0C", "0D"), generateKmz = true, saveOds = false, usUnits = false),
+            DirStorage(tmp.newFolder("kmz2")), null, metricRenderer
+        )
+        assertEquals("km/h", metricRenderer.speedUnit)
+        assertEquals(45.0, metricRenderer.obdSpeeds.single().second.toDouble(), 0.001)
+        assertEquals(36.0, metricRenderer.gpsSpeeds.single().second.toDouble(), 0.001) // 10 m/s
     }
 }

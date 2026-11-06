@@ -53,14 +53,20 @@
     <string name="gps_last_fix">Last fix</string>
     <string name="gps_position">Position</string>
     <string name="gps_speed">Speed</string>
-    <string name="gps_speed_value">%.1f mph</string>
     <string name="gps_accuracy">Accuracy</string>
     <string name="gps_accuracy_value">±%.0f m</string>
+    <string name="gps_speed_value">%1$s %2$s</string>
+    <string name="unit_mph">mph</string>
+    <string name="unit_kph">km/h</string>
 
     <!-- Home: OBD tile -->
     <string name="obd_tile_title">OBD-II</string>
-    <string name="obd_gauge_mph">MPH</string>
     <string name="obd_gauge_rpm">RPM</string>
+
+    <!-- Settings: units -->
+    <string name="settings_section_units">Units</string>
+    <string name="settings_units_us">US Customary (MPH, °F, psi)</string>
+    <string name="settings_units_metric">Metric (km/h, °C, kPa)</string>
 
     <!-- Settings: screen + sections -->
     <string name="settings_title">Settings</string>
@@ -96,6 +102,12 @@
     <string name="settings_split_caption">New temp file at max size (still one trip)</string>
     <string name="settings_max_size">Max File Size (MB)</string>
     <string name="settings_max_size_support">Maximum size of each temp file</string>
+    <string name="settings_archive_retention">Archive Retention (days)</string>
+    <string name="settings_archive_retention_support">0 = keep archived trips forever</string>
+    <string name="settings_min_trip_length">Discard Trips Shorter Than (seconds)</string>
+    <string name="settings_min_trip_length_support">0 = keep all archived trips</string>
+    <string name="settings_rebuild">Rebuild Logs From Archive</string>
+    <string name="settings_rebuild_caption">Re-convert every archived trip into the formats selected above (safe to repeat)</string>
     <string name="location_field_required">%1$s (required)</string>
     <string name="location_not_set_app_storage">Not set (app storage)</string>
 
@@ -123,9 +135,11 @@
     <string name="awaiting_bluetooth_connection">Awaiting Bluetooth Connection</string>
     <string name="logging_active">Logging Active</string>
     <string name="stop_service">Stop Service</string>
-    <string name="notification_obd_summary">OBD: %1$s mph %2$s rpm</string>
+    <string name="notification_obd_summary">OBD: %1$s %2$s rpm</string>
     <string name="obd_status_connecting">OBD: connecting…</string>
     <string name="toast_trip_complete">Trip complete. Log files updated.</string>
+    <string name="toast_rebuild_done">Archive rebuilt: %1$d trip(s) re-converted.</string>
+    <string name="toast_rebuild_no_temp">Set a Temporary Storage Location first (the archive lives there).</string>
 
     <string name="notification_speed_units">" MPH"</string>
     <string name="notification_last_fix_text">"Last Fix:"</string>

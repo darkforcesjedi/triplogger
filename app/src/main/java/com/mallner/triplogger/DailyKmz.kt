@@ -8,7 +8,7 @@ import java.util.zip.ZipOutputStream
 
 /** Draws the per-trip speed plot PNG. Dataset1 = OBD speed (red), Dataset2 = GPS speed (blue). */
 interface PlotRenderer {
-    fun renderPng(label: String, obdSpeedsMph: List<Pair<Long, Float>>, gpsSpeedsMph: List<Pair<Long, Float>>): ByteArray
+    fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
 }
 
 data class TrackPoint(val gpsTimeMs: Long, val lon: Double, val lat: Double, val alt: Double)
@@ -17,9 +17,10 @@ data class TripTrack(
     /** Unique id embedded in the KML ("yyyy-MM-dd HH:mm:ss"), used to make merging idempotent. */
     val trackId: String,
     val label: String,           // "yyyy-MM-dd HH.mm.ss"
+    val speedUnit: String,       // display unit of the speed series ("mph" or "km/h")
     val points: List<TrackPoint>,
-    val obdSpeedsMph: List<Pair<Long, Float>>,
-    val gpsSpeedsMph: List<Pair<Long, Float>>
+    val obdSpeeds: List<Pair<Long, Float>>,
+    val gpsSpeeds: List<Pair<Long, Float>>
 )
 
 /**
@@ -116,7 +117,7 @@ class DailyKmz(
 
         for (trip in trips) {
             if (trip.trackId in skipIds) continue  // already merged (recovery/idempotency)
-            if (trip.points.isEmpty() && trip.obdSpeedsMph.isEmpty() && trip.gpsSpeedsMph.isEmpty()) continue
+            if (trip.points.isEmpty() && trip.obdSpeeds.isEmpty() && trip.gpsSpeeds.isEmpty()) continue
             val color = colorList[placemarkCount % colorList.size]
             val placemark = placemarkXml(trip.label, trip.trackId, color, trip.points)
             kml = if (kml == null) {
@@ -128,7 +129,7 @@ class DailyKmz(
             }
             placemarkCount++
 
-            val png = renderer.renderPng(trip.label, trip.obdSpeedsMph, trip.gpsSpeedsMph)
+            val png = renderer.renderPng(trip.label, trip.speedUnit, trip.obdSpeeds, trip.gpsSpeeds)
             existingEntries["${trip.label}.png"] = png
         }
 

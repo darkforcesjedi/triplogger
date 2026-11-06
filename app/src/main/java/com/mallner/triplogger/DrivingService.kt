@@ -31,7 +31,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,6 +40,7 @@ class DrivingService : Service() {
     companion object {
         const val ACTION_STOP_SERVICE = "STOP_SERVICE"
         const val ACTION_NEW_TRIP = "NEW_TRIP"
+        const val ACTION_REBUILD_LOGS = "REBUILD_LOGS"
     }
 
     private lateinit var appSettingsRepository: AppSettingsRepository
@@ -69,33 +69,32 @@ class DrivingService : Service() {
         appSettingsRepository.appSettingsFlow.first().also { lastSettings = it }
     }
 
-    /** Journal store: user-selected temp folder (with pending/success/failed subfolders). */
+    /** Journal store: the user-selected temp folder (pending/archive/failed subfolders). */
     private fun journalStore(): JournalStore? {
         val uri = settingsSnapshot().tempLocationUri
+        if (uri.isEmpty()) {
+            // Nothing may be written outside a user-selected folder.
+            return null
+        }
         journalStore?.let { if (journalStoreUri == uri) return it }
         val store = try {
-            if (uri.isNotEmpty()) {
-                SafJournalStore(this, Uri.parse(uri))
-            } else {
-                FileJournalStore(File(getExternalFilesDir(null), "trips/journal"))
-            }
+            SafJournalStore(this, Uri.parse(uri))
         } catch (e: Exception) {
-            Log.e("DrivingService", "Temp storage unavailable, using app storage", e)
-            FileJournalStore(File(getExternalFilesDir(null), "trips/journal"))
+            Log.e("DrivingService", "Temp storage unavailable", e)
+            return null
         }
         journalStore = store
         journalStoreUri = uri
         return store
     }
 
-    private fun outputStorage(uri: String, fallbackSubdir: String): TripStorage {
+    /** Output storage for a selected folder; null when the user has not chosen one. */
+    private fun outputStorage(uri: String): TripStorage? {
         val settings = settingsSnapshot()
         val effective = uri.ifEmpty { settings.storageLocationUri }
         return if (effective.isNotEmpty()) {
-            SafTreeStorage(this, Uri.parse(effective))
-        } else {
-            DirStorage(File(getExternalFilesDir(null), "trips/$fallbackSubdir"))
-        }
+            runCatching { SafTreeStorage(this, Uri.parse(effective)) }.getOrNull()
+        } else null
     }
 
     private fun isConnected(device: BluetoothDevice): Boolean {
@@ -182,6 +181,12 @@ class DrivingService : Service() {
                     createJournal(settings)
                 }
             }
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_REBUILD_LOGS) {
+            // "Rebuild logs from archive": one-shot re-conversion, works even
+            // when the logging service is otherwise disabled.
+            rebuildFromArchive()
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP_SERVICE) {
@@ -382,7 +387,7 @@ class DrivingService : Service() {
 
             val shortTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
             val shortTime = shortTimeFormat.format(Date())
-            val speedMPH = location.speed * 2.23694f
+            val displaySpeed = UnitFormat.mpsToDisplay(location.speed.toDouble(), settings.usUnits)
 
             try {
                 journal.append(
@@ -405,7 +410,8 @@ class DrivingService : Service() {
                 notificationManager.updateStatus(
                     statusText = getString(R.string.logging_active),
                     lastFix = shortTime,
-                    speed = speedMPH.toInt().toString(),
+                    speed = displaySpeed.toInt().toString(),
+                    speedUnit = UnitFormat.speedUnitLabel(settings.usUnits).uppercase(),
                     extra = obdSummaryText()
                 )
             }.onFailure { Log.e("DrivingService", "Notification update failed", it) }
@@ -414,8 +420,12 @@ class DrivingService : Service() {
 
     private fun obdSummaryText(): String? {
         if (!DrivingStatus.isObdConnected.value) return DrivingStatus.obdStatusText.value
+        val us = lastSettings?.usUnits ?: true
         val rpm = lastObdValues["0C"]?.toInt()?.toString() ?: "-"
-        val speed = lastObdValues["0D"]?.let { (it * TripFormats.KMH_TO_MPH).toInt().toString() } ?: "-"
+        val speed = lastObdValues["0D"]?.let {
+            val (v, unit) = UnitFormat.convert("km/h", it, us)
+            "${v.toInt()} $unit"
+        } ?: "-"
         return getString(R.string.notification_obd_summary, speed, rpm)
     }
 
@@ -562,22 +572,18 @@ class DrivingService : Service() {
     }
 
     /**
-     * Converts [trip] to the configured outputs and relocates its journal into
-     * the temp folder's success/ or failed/ subfolder. If the output storage is
-     * not reachable the trip stays in pending/ for the next recovery pass.
+     * Converts [trip] to the configured outputs. When [relocate] is true the
+     * journal moves to archive/ or failed/; when false (rebuild from archive)
+     * the outputs are overwritten but the archived journal is untouched.
      */
-    private fun finalizeTrip(store: JournalStore, trip: OrphanTrip) {
+    private fun finalizeTrip(store: JournalStore, trip: OrphanTrip, relocate: Boolean = true): FinalizeResult {
         val settings = settingsSnapshot()
-        val kmzStorage = if (settings.generateKmz) {
-            runCatching { outputStorage(settings.kmzLocationUri, "kmz") }.getOrNull()
-        } else null
-        val odsStorage = if (settings.saveOds) {
-            runCatching { outputStorage(settings.odsLocationUri, "ods") }.getOrNull()
-        } else null
+        val kmzStorage = if (settings.generateKmz) outputStorage(settings.kmzLocationUri) else null
+        val odsStorage = if (settings.saveOds) outputStorage(settings.odsLocationUri) else null
 
         if ((settings.generateKmz && kmzStorage == null) || (settings.saveOds && odsStorage == null)) {
-            Log.e("DrivingService", "Output storage unavailable; trip ${trip.name} stays pending")
-            return
+            Log.e("DrivingService", "Output storage unavailable; trip ${trip.name} stays as is")
+            return FinalizeResult.Failed(IllegalStateException("Output storage unavailable"))
         }
 
         val result = TripFinalizer.finalize(
@@ -585,7 +591,8 @@ class DrivingService : Service() {
             FinalizeSettings(
                 pidHexes = settings.obdSelectedPids,
                 generateKmz = settings.generateKmz,
-                saveOds = settings.saveOds
+                saveOds = settings.saveOds,
+                usUnits = settings.usUnits
             ),
             kmzStorage,
             odsStorage,
@@ -594,20 +601,25 @@ class DrivingService : Service() {
         when (result) {
             is FinalizeResult.Completed -> {
                 Log.i("DrivingService", "Trip ${result.label} converted (ods=${result.wroteOds} kmz=${result.kmzDayLabel})")
-                runCatching { store.relocate(trip, toSuccess = true) }
-                    .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to success", it) }
-                toast(getString(R.string.toast_trip_complete))
+                if (relocate) {
+                    runCatching { store.relocate(trip, toArchive = true) }
+                        .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to archive", it) }
+                    toast(getString(R.string.toast_trip_complete))
+                }
             }
             is FinalizeResult.Skipped -> {
                 Log.i("DrivingService", "Trip ${trip.name} skipped: ${result.reason}")
-                runCatching { store.delete(trip) }
+                if (relocate) runCatching { store.delete(trip) }
             }
             is FinalizeResult.Failed -> {
-                Log.e("DrivingService", "Trip ${trip.name} conversion failed; moving to failed/", result.error)
-                runCatching { store.relocate(trip, toSuccess = false) }
-                    .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to failed", it) }
+                Log.e("DrivingService", "Trip ${trip.name} conversion failed", result.error)
+                if (relocate) {
+                    runCatching { store.relocate(trip, toArchive = false) }
+                        .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to failed", it) }
+                }
             }
         }
+        return result
     }
 
     /** Toasts run on the main looper; safe to call from any service coroutine. */
@@ -631,9 +643,51 @@ class DrivingService : Service() {
                         Log.e("DrivingService", "Recovery failed for ${trip.name}", e)
                     }
                 }
+                purgeArchive(store)
             } finally {
                 recovering.set(false)
             }
+        }
+    }
+
+    /** Applies the archive retention policy (age / minimum trip duration). */
+    private fun purgeArchive(store: JournalStore) {
+        val settings = settingsSnapshot()
+        val policy = ArchivePolicy(settings.archiveRetentionDays, settings.archiveMinTripSec)
+        if (policy.retentionDays <= 0 && policy.minTripSec <= 0) return
+        val now = System.currentTimeMillis()
+        for (trip in store.archivedTrips()) {
+            try {
+                if (policy.shouldDelete(trip.startMs(), trip.durationMs(), now)) {
+                    Log.i("DrivingService", "Purging archived trip ${trip.name} (retention policy)")
+                    store.delete(trip)
+                }
+            } catch (e: Exception) {
+                Log.e("DrivingService", "Could not evaluate archived trip ${trip.name}", e)
+            }
+        }
+    }
+
+    /**
+     * Re-runs every archived trip journal through the converter: regenerates
+     * KMZ tracks (idempotent - existing track ids are skipped, so nothing is
+     * duplicated) and ODS sheets for whichever formats are switched on now.
+     */
+    private fun rebuildFromArchive() {
+        serviceScope.launch {
+            val store = journalStore() ?: run {
+                toast(getString(R.string.toast_rebuild_no_temp))
+                return@launch
+            }
+            var rebuilt = 0
+            for (trip in store.archivedTrips()) {
+                try {
+                    if (finalizeTrip(store, trip, relocate = false) is FinalizeResult.Completed) rebuilt++
+                } catch (e: Exception) {
+                    Log.e("DrivingService", "Rebuild failed for ${trip.name}", e)
+                }
+            }
+            toast(getString(R.string.toast_rebuild_done, rebuilt))
         }
     }
 }

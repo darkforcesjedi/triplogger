@@ -59,4 +59,64 @@ class ObdPidsTest {
     fun defaultsAreRealPids() {
         assertTrue(ObdPids.DEFAULTS.all { ObdPids.byHex(it) != null })
     }
+
+    @Test
+    fun fuelLevelIsPercentageNotFuelType() {
+        // 2F: 100*A/255 (the old "51" returned 1 on this car: fuel *type* gasoline)
+        val fuel = ObdPids.byHex("2F")!!
+        assertEquals(100.0, ObdPids.parseValue(fuel, "FF")!!, 0.001)
+        assertEquals(50.2, ObdPids.parseValue(fuel, "80")!!, 0.3)
+        assertNull(ObdPids.byHex("51"))
+    }
+
+    @Test
+    fun ambientAirTempIs46Not5F() {
+        // 5F is fuel rail gauge pressure; 46 is the J1979 ambient air temperature
+        assertEquals("Ambient Air Temp", ObdPids.byHex("46")!!.name)
+        assertEquals(34.0, ObdPids.parseValue(ObdPids.byHex("46")!!, "4A")!!, 0.001)
+        assertNull(ObdPids.byHex("5F"))
+    }
+
+    @Test
+    fun distanceSinceDtcClearIs31() {
+        assertEquals("Distance Since DTC Clear", ObdPids.byHex("31")!!.name)
+        assertEquals(5000.0, ObdPids.parseValue(ObdPids.byHex("31")!!, "1388")!!, 0.001)
+        assertNull(ObdPids.byHex("21")) // 21 is distance since trouble code clear *mil on*, mislabeled before
+    }
+
+    @Test
+    fun timingAdvanceHasMinus64Offset() {
+        assertEquals(0.0, ObdPids.parseValue(ObdPids.byHex("0E")!!, "80")!!, 0.001)   // A/2-64
+        assertEquals(-64.0, ObdPids.parseValue(ObdPids.byHex("0E")!!, "00")!!, 0.001)
+    }
+
+    @Test
+    fun trimsUse128ScaleAndMinus100Offset() {
+        assertEquals(-100.0, ObdPids.parseValue(ObdPids.byHex("06")!!, "00")!!, 0.001)
+        assertEquals(37.5, ObdPids.parseValue(ObdPids.byHex("06")!!, "B0")!!, 0.01)   // 176/1.28-100
+    }
+
+    @Test
+    fun evapPurgeIs2EAndCatalystsAre3Cand3E() {
+        assertEquals("Commanded EVAP Purge", ObdPids.byHex("2E")!!.name)
+        assertNull(ObdPids.byHex("4C"))
+        assertNull(ObdPids.byHex("34"))
+        assertNull(ObdPids.byHex("35"))
+        // 3C: (A*256+B)/10 - 40; 0x06A4 = 1700 -> 130 C
+        assertEquals(130.0, ObdPids.parseValue(ObdPids.byHex("3C")!!, "06A4")!!, 0.001)
+    }
+
+    @Test
+    fun equivalenceRatioAndOdometer() {
+        // 44: A*256+B * 2/65536 ; 0x8000 -> lambda 1.0
+        assertEquals(1.0, ObdPids.parseValue(ObdPids.byHex("44")!!, "8000")!!, 0.001)
+        // A6: raw/10 km ; 0x000F4240 = 1_000_000 -> 100000 km
+        assertEquals(100000.0, ObdPids.parseValue(ObdPids.byHex("A6")!!, "000F4240")!!, 0.001)
+    }
+
+    @Test
+    fun hybridBatteryChargeAvailable() {
+        assertEquals("Hybrid Battery Charge", ObdPids.byHex("5B")!!.name)
+        assertEquals(100.0, ObdPids.parseValue(ObdPids.byHex("5B")!!, "FF")!!, 0.001)
+    }
 }

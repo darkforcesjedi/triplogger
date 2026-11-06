@@ -30,6 +30,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -176,6 +177,20 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             }
         }
 
+        // ---------------------------------------------------------------- Units
+        Spacer(modifier = Modifier.height(16.dp))
+        SectionHeader(stringResource(R.string.settings_section_units))
+        UnitOption(
+            label = stringResource(R.string.settings_units_us),
+            selected = appSettings.usUnits,
+            onSelect = { coroutineScope.launch { appSettingsRepository.updateUsUnits(true) } }
+        )
+        UnitOption(
+            label = stringResource(R.string.settings_units_metric),
+            selected = !appSettings.usUnits,
+            onSelect = { coroutineScope.launch { appSettingsRepository.updateUsUnits(false) } }
+        )
+
         // ----------------------------------------------------------- Trip logs
         Spacer(modifier = Modifier.height(16.dp))
         SectionHeader(stringResource(R.string.settings_section_logs))
@@ -250,6 +265,37 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                 }
             )
         }
+        Spacer(modifier = Modifier.height(16.dp))
+        NumberField(
+            value = appSettings.archiveRetentionDays,
+            label = stringResource(R.string.settings_archive_retention),
+            supporting = stringResource(R.string.settings_archive_retention_support),
+            onApply = { coroutineScope.launch { appSettingsRepository.updateArchiveRetentionDays(it) } }
+        )
+        NumberField(
+            value = appSettings.archiveMinTripSec,
+            label = stringResource(R.string.settings_min_trip_length),
+            supporting = stringResource(R.string.settings_min_trip_length_support),
+            onApply = { coroutineScope.launch { appSettingsRepository.updateArchiveMinTripSec(it) } }
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            enabled = appSettings.tempLocationUri.isNotEmpty() &&
+                (appSettings.generateKmz || appSettings.saveOds),
+            onClick = {
+                context.startService(
+                    Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_REBUILD_LOGS }
+                )
+            }
+        ) {
+            Text(stringResource(R.string.settings_rebuild))
+        }
+        Text(
+            text = stringResource(R.string.settings_rebuild_caption),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
         Spacer(modifier = Modifier.height(24.dp))
     }
 
@@ -300,6 +346,48 @@ private fun SectionHeader(title: String) {
         fontSize = 18.sp,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(bottom = 8.dp)
+    )
+}
+
+/** Single-select unit system row (radio + label). */
+@Composable
+private fun UnitOption(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(onClick = onSelect)
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(label, fontSize = 16.sp)
+    }
+}
+
+/** Integer setting with immediate apply; 0 and blank both mean "off". */
+@Composable
+private fun NumberField(
+    value: Int,
+    label: String,
+    supporting: String,
+    onApply: (Int) -> Unit
+) {
+    var text by remember { mutableStateOf(value.toString()) }
+    LaunchedEffect(value) { if (text.toIntOrNull() != value) text = value.toString() }
+    OutlinedTextField(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
+        value = text,
+        onValueChange = { input ->
+            text = input.filter { it.isDigit() }
+            text.toIntOrNull()?.let { onApply(it) }
+        },
+        label = { Text(label) },
+        supportingText = { Text(supporting) },
+        singleLine = true,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
     )
 }
 

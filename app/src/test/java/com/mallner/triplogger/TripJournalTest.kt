@@ -50,7 +50,7 @@ class TripJournalTest {
 
         // simulate one previous failure
         val trips = store.unfinishedTrips()
-        store.relocate(trips.first(), toSuccess = false)
+        store.relocate(trips.first(), toArchive = false)
 
         val names = store.unfinishedTrips().map { it.name }
         assertEquals(listOf("20260119_060000", "20260119_070000"), names.sorted())
@@ -66,11 +66,11 @@ class TripJournalTest {
         journal.close()
 
         val trip = store.orphanOf(journal)
-        store.relocate(trip, toSuccess = true)
+        store.relocate(trip, toArchive = true)
 
         assertFalse(java.io.File(root, "pending/20260119_060000").exists())
-        assertTrue(java.io.File(root, "success/20260119_060000/gps-000.csv").isFile)
-        assertTrue(java.io.File(root, "success/20260119_060000/obd-000.csv").isFile)
+        assertTrue(java.io.File(root, "archive/20260119_060000/gps-000.csv").isFile)
+        assertTrue(java.io.File(root, "archive/20260119_060000/obd-000.csv").isFile)
     }
 
     @Test
@@ -152,5 +152,85 @@ class TripJournalTest {
         full.append(GpsRow(1000, 1000, 37.39, -122.08, 40.0, 12.5f, 180f, 5f))
         full.close()
         assertFalse(store.orphanOf(full).isEmpty())
+    }
+
+    @Test
+    fun archivedTripsListedAfterRelocation() {
+        val store = FileJournalStore(tmp.newFolder("journal8"))
+        val journal = store.createTrip("20260119_060000", 1768798800000L, listOf("0C"))
+        journal.append(GpsRow(1000, 1000, 37.39, -122.08, 40.0, 12.5f, 180f, 5f))
+        journal.close()
+        val trip = store.orphanOf(journal)
+        store.relocate(trip, toArchive = true)
+
+        assertEquals(listOf("20260119_060000"), store.archivedTrips().map { it.name })
+        assertTrue(store.unfinishedTrips().isEmpty())
+        // the archived journal stays fully readable (basis of "rebuild from archive")
+        assertEquals(1, store.archivedTrips().single().readGpsRows().size)
+        assertEquals(1768798800000L, store.archivedTrips().single().startMs())
+    }
+
+    @Test
+    fun archiveIgnoresDirectoriesWithoutProperties() {
+        val root = tmp.newFolder("journal9")
+        val store = FileJournalStore(root)
+        java.io.File(root, "archive/stray").mkdirs()
+        assertTrue(store.archivedTrips().isEmpty())
+    }
+
+    @Test
+    fun legacySuccessFolderIsRenamedToArchive() {
+        val root = tmp.newFolder("journal10")
+        val legacy = java.io.File(root, "success/20260119_060000")
+        legacy.mkdirs()
+        java.io.File(legacy, "trip.properties").writeText("trip_id=20260119_060000\nstart_ms=1768798800000\npids=0C\n")
+        java.io.File(legacy, "gps.csv").writeText(LiveJournal.GPS_HEADER + "\n1000,1000,37.39,-122.08,40.0,12.5,180,5\n")
+
+        val store = FileJournalStore(root)
+        assertEquals(listOf("20260119_060000"), store.archivedTrips().map { it.name })
+        assertTrue(java.io.File(root, "archive/20260119_060000/trip.properties").isFile)
+        assertFalse(java.io.File(root, "success").exists())
+    }
+
+    @Test
+    fun durationSpansFirstToLastSample() {
+        val store = FileJournalStore(tmp.newFolder("journal11"))
+        val journal = store.createTrip("20260119_060000", 1768798800000L, listOf("0C"))
+        journal.append(GpsRow(1000, 1000, 37.39, -122.08, 40.0, 12.5f, 180f, 5f))
+        journal.append(ObdRow(31000, null, null, null, null, mapOf("0C" to 900.0)))
+        journal.append(GpsRow(61000, 61000, 37.39, -122.08, 40.0, 0f, 180f, 5f))
+        journal.close()
+        assertEquals(60000L, store.orphanOf(journal).durationMs())
+    }
+
+    @Test
+    fun durationZeroWithoutSamples() {
+        val store = FileJournalStore(tmp.newFolder("journal12"))
+        val journal = store.createTrip("20260119_060000", 1768798800000L, listOf("0C"))
+        journal.close()
+        assertEquals(0L, store.orphanOf(journal).durationMs())
+    }
+
+    @Test
+    fun archivePolicyRules() {
+        val now = 1_700_000_000_000L
+        val day = 86_400_000L
+
+        val off = ArchivePolicy(retentionDays = 0, minTripSec = 0)
+        assertFalse(off.shouldDelete(now - 365 * day, 1_000, now)) // never delete when both rules are off
+
+        val age = ArchivePolicy(retentionDays = 7, minTripSec = 0)
+        assertTrue(age.shouldDelete(now - 8 * day, 10 * 60_000, now))
+        assertFalse(age.shouldDelete(now - 6 * day, 10 * 60_000, now))
+
+        val minLen = ArchivePolicy(retentionDays = 0, minTripSec = 60)
+        assertTrue(minLen.shouldDelete(now, 59_000, now))
+        assertFalse(minLen.shouldDelete(now, 60_000, now))
+        assertTrue(minLen.shouldDelete(now, 0, now)) // unknown/empty counts as too short
+
+        val both = ArchivePolicy(retentionDays = 30, minTripSec = 30)
+        assertTrue(both.shouldDelete(now - 40 * day, 60_000, now))   // too old
+        assertTrue(both.shouldDelete(now, 10_000, now))              // too short
+        assertFalse(both.shouldDelete(now - 10 * day, 60_000, now))  // keep
     }
 }

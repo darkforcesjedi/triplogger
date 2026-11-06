@@ -237,7 +237,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
         Spacer(modifier = Modifier.height(16.dp))
         ToggleRow(
             label = "Split Temp Log Files",
-            caption = "Start a new temp file when one reaches the maximum size (still one trip)",
+            caption = "New temp file at max size (still one trip)",
             checked = appSettings.splitEnabled,
             onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateSplitEnabled(on) } }
         )
@@ -392,7 +392,7 @@ private fun MaxSegmentSizeField(initialMb: Double, onApply: (Double) -> Unit) {
             if (mb != null && mb > 0) onApply(mb)
         },
         label = { Text("Max File Size (MB)") },
-        supportingText = { Text("Each temp file splits after this size - the trip is reassembled when it converts") },
+        supportingText = { Text("Maximum size of each temp file") },
         singleLine = true,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
     )

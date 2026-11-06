@@ -15,7 +15,10 @@ enum class ObdLinkState {
     CONNECTING,
 
     /** ELM327 session open and polling. */
-    CONNECTED
+    CONNECTED,
+
+    /** Connection attempt or scan failed; waiting to retry. */
+    TIMED_OUT
 }
 
 object DrivingStatus {

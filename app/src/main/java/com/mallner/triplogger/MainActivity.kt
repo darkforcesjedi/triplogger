@@ -225,7 +225,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
         }
         SwitchRow(
             label = "Force Logging",
-            caption = "Start logging right away without waiting for the trigger device",
+            caption = "Always log when service is enabled",
             checked = appSettings.forceLogging,
             onCheckedChange = { coroutineScope.launch { appSettingsRepository.updateForceLogging(it) } }
         )
@@ -280,7 +280,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             Text("New Trip")
         }
         Text(
-            text = "Ends the current trip now (it is converted to KMZ/ODS as usual) and starts a fresh one.",
+            text = "Start a new trip log",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
@@ -288,12 +288,21 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
 
         // ------------------------------------------------------------- GPS tile
         if (appSettings.gpsEnabled) {
+            val location = lastLocation
+            val gpsLight = when {
+                !serviceEnabled -> MaterialTheme.colorScheme.outline
+                isLogging && location != null -> Color(0xFF43A047)
+                else -> Color(0xFFFFB300)
+            }
+            val gpsStatus = when {
+                !serviceEnabled -> "Service off"
+                !isLogging -> "Waiting for trigger"
+                location == null -> "Waiting for fix"
+                else -> null // connected: no status line
+            }
             Spacer(modifier = Modifier.height(20.dp))
-            StatusTile(title = "GPS") {
-                val location = lastLocation
-                if (location == null) {
-                    Text("Waiting for first fix…", fontSize = 14.sp)
-                } else {
+            StatusTile(title = "GPS", light = gpsLight, statusText = gpsStatus) {
+                if (location != null) {
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(location.time))
                     StatusLine("Last fix", time)
                     StatusLine(
@@ -313,28 +322,23 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
 
         // ------------------------------------------------------------- OBD tile
         if (appSettings.obdEnabled) {
+            val connected = serviceEnabled && obdLink == ObdLinkState.CONNECTED
+            val obdLight = when {
+                !serviceEnabled || obdLink == ObdLinkState.IDLE -> MaterialTheme.colorScheme.outline
+                connected -> Color(0xFF43A047)
+                obdLink == ObdLinkState.TIMED_OUT -> Color(0xFFE53935)
+                else -> Color(0xFFFFB300)
+            }
+            val obdStatus: String? = when {
+                !serviceEnabled -> "Service off"
+                connected -> null // hidden when connected
+                obdLink == ObdLinkState.IDLE -> "Idle"
+                obdLink == ObdLinkState.WAITING_FOR_DEVICE -> "Waiting for trigger"
+                obdLink == ObdLinkState.CONNECTING -> "Connecting"
+                else -> "Timed out (retrying)"
+            }
             Spacer(modifier = Modifier.height(20.dp))
-            StatusTile(title = "OBD-II") {
-                val linkText = when {
-                    !serviceEnabled -> "Idle - service off"
-                    else -> when (obdLink) {
-                        ObdLinkState.IDLE -> "Idle"
-                        ObdLinkState.WAITING_FOR_DEVICE -> "Waiting for trigger device"
-                        ObdLinkState.CONNECTING -> "Connecting to adapter…"
-                        ObdLinkState.CONNECTED -> "Connected"
-                    }
-                }
-                val connected = serviceEnabled && obdLink == ObdLinkState.CONNECTED
-                val dot = when {
-                    connected -> Color(0xFF43A047)
-                    serviceEnabled -> Color(0xFFFFB300)
-                    else -> MaterialTheme.colorScheme.outline
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(12.dp).background(dot, CircleShape))
-                    Spacer(modifier = Modifier.size(width = 8.dp, height = 0.dp))
-                    Text(linkText, fontSize = 14.sp)
-                }
+            StatusTile(title = "OBD-II", light = obdLight, statusText = obdStatus) {
                 val speedMph = if (connected) obdValues["0D"]?.let { it * TripFormats.KMH_TO_MPH } else null
                 val rpm = if (connected) obdValues["0C"] else null
                 Row(
@@ -382,13 +386,34 @@ private fun SwitchRow(
 }
 
 @Composable
-private fun StatusTile(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun StatusTile(
+    title: String,
+    light: Color,
+    statusText: String? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .background(light, CircleShape)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+            if (statusText != null) {
+                Text(
+                    text = statusText,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp, start = 24.dp)
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             content()
         }

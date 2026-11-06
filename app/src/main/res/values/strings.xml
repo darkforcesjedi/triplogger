@@ -1,10 +1,132 @@
 <resources>
+    <!-- ============================================================ -->
+    <!-- All user-facing text lives here. Add a translation by       -->
+    <!-- creating res/values-<lang>/strings.xml (e.g. values-es).    -->
+    <!-- Strings with %1$s / %1$d placeholders are formatted at      -->
+    <!-- runtime; keep the placeholders when translating.            -->
+    <!-- ============================================================ -->
+
+    <!-- General -->
     <string name="app_name">Driving Trip Logger</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_settings">Settings</string>
+    <string name="action_select">Select</string>
+    <string name="action_scan">Scan</string>
+    <string name="action_set">Set</string>
+    <string name="action_use">Use</string>
+    <string name="action_save">Save</string>
+    <string name="action_close">Close</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="not_set">Not set</string>
+
+    <!-- Permissions (Home) -->
+    <string name="permissions_missing">Permissions not granted. Please grant permissions for the app to function correctly.</string>
+    <string name="permissions_enable">Enable Permissions</string>
+
+    <!-- Home: service controls -->
+    <string name="home_service_enabled">Service Enabled</string>
+    <string name="home_service_needs_temp">Choose a Temporary Storage Location in Settings first</string>
+    <string name="home_logging_blocked">Logging stays off until a temporary folder is chosen.</string>
+    <string name="home_force_logging">Force Logging</string>
+    <string name="home_force_logging_caption">Always log when service is enabled</string>
+
+    <!-- Home: trigger light -->
+    <string name="home_light_idle">Idle - service off</string>
+    <string name="home_light_armed">Armed - waiting for a trigger device</string>
+    <string name="home_light_logging">Logging</string>
+    <string name="home_light_manual">Logging - started manually</string>
+    <string name="home_light_triggered">Logging - triggered by \"%1$s\"</string>
+    <string name="home_recording">Recording: %1$s</string>
+    <string name="home_no_trip">No trip in progress</string>
+    <string name="home_new_trip">Start a new trip log</string>
+
+    <!-- Home: status tiles -->
+    <string name="tile_service_off">Service off</string>
+    <string name="tile_idle">Idle</string>
+    <string name="tile_waiting_trigger">Waiting for trigger</string>
+    <string name="tile_waiting_fix">Waiting for fix</string>
+    <string name="tile_connecting">Connecting</string>
+    <string name="tile_timed_out">Timed out (retrying)</string>
+
+    <!-- Home: GPS tile -->
+    <string name="gps_tile_title">GPS</string>
+    <string name="gps_last_fix">Last fix</string>
+    <string name="gps_position">Position</string>
+    <string name="gps_speed">Speed</string>
+    <string name="gps_speed_value">%.1f mph</string>
+    <string name="gps_accuracy">Accuracy</string>
+    <string name="gps_accuracy_value">±%.0f m</string>
+
+    <!-- Home: OBD tile -->
+    <string name="obd_tile_title">OBD-II</string>
+    <string name="obd_gauge_mph">MPH</string>
+    <string name="obd_gauge_rpm">RPM</string>
+
+    <!-- Settings: screen + sections -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_triggers">Log Triggers</string>
+    <string name="settings_section_gps">GPS</string>
+    <string name="settings_section_obd">OBD (ELM327 Compatible)</string>
+    <string name="settings_section_logs">Trip Log Settings</string>
+
+    <!-- Settings: triggers -->
+    <string name="settings_trigger_label">Bluetooth Device(s)</string>
+    <string name="settings_trigger_none">None set - logging never triggers</string>
+
+    <!-- Settings: GPS -->
+    <string name="settings_gps_use">Use GPS to Log Location</string>
+    <string name="settings_gps_interval">Poll Interval (seconds)</string>
+
+    <!-- Settings: OBD -->
+    <string name="settings_obd_use">Use OBD Adapter to Log Engine Data</string>
+    <string name="settings_obd_adapter">Adapter</string>
+    <string name="settings_obd_adapter_none">Not set - tap Select to scan</string>
+    <string name="settings_obd_interval">Poll Interval (milliseconds)</string>
+    <string name="settings_sensors_button">Sensors (%1$d selected)</string>
+
+    <!-- Settings: trip log output -->
+    <string name="settings_kmz_toggle">Generate Google Maps (KMZ) Logs</string>
+    <string name="settings_kmz_needs_gps">Requires GPS logging to be enabled</string>
+    <string name="settings_ods_toggle">Generate Spreadsheet (ODS) Logs</string>
+    <string name="settings_kmz_location">KMZ Output Location</string>
+    <string name="settings_ods_location">ODS Output Location</string>
+    <string name="settings_temp_location">Temporary Storage Location</string>
+    <string name="settings_temp_required_error">Required: logging cannot be enabled until a temporary folder is chosen.</string>
+    <string name="settings_split_toggle">Split Temp Log Files</string>
+    <string name="settings_split_caption">New temp file at max size (still one trip)</string>
+    <string name="settings_max_size">Max File Size (MB)</string>
+    <string name="settings_max_size_support">Maximum size of each temp file</string>
+    <string name="location_field_required">%1$s (required)</string>
+    <string name="location_not_set_app_storage">Not set (app storage)</string>
+
+    <!-- Settings: trigger device dialog -->
+    <string name="trigger_dialog_title">Trigger Device(s)</string>
+    <string name="trigger_dialog_field">Name or names separated by |</string>
+    <string name="trigger_dialog_hint">e.g. ford|car box|chev - starts logging when a matching Bluetooth device connects</string>
+    <string name="trigger_dialog_tap_hint">Tap a paired device to add it:</string>
+    <string name="trigger_dialog_added">added</string>
+    <string name="trigger_dialog_no_paired">No paired devices found</string>
+
+    <!-- Settings: OBD adapter scan dialog -->
+    <string name="adapter_dialog_title">OBD Adapter</string>
+    <string name="adapter_scanning">Scanning for nearby devices…</string>
+    <string name="adapter_nearby">Nearby devices (tap to select):</string>
+    <string name="adapter_obd_guess">OBD?</string>
+    <string name="adapter_nothing_found">Nothing found yet. Wake the adapter (ignition on) and scan again.</string>
+    <string name="adapter_manual_entry">Or type the adapter name</string>
+
+    <!-- Settings: sensor picker dialog -->
+    <string name="sensors_dialog_title">Sensors to log</string>
+
+    <!-- Service / notifications -->
+    <string name="service_enabled">Service Enabled</string>
     <string name="awaiting_bluetooth_connection">Awaiting Bluetooth Connection</string>
     <string name="logging_active">Logging Active</string>
-    <string name="service_enabled">Service Enabled</string>
-    <string name="notification_update">Last Fix: %1$s \u0020\u0020|\u0020\u0020 Speed: %2$d MPH</string>
     <string name="stop_service">Stop Service</string>
+    <string name="notification_update">Last Fix: %1$s \u0020\u0020|\u0020\u0020 Speed: %2$d MPH</string>
+    <string name="notification_obd_summary">OBD: %1$dmph %2$drpm</string>
+    <string name="obd_status_connecting">OBD: connecting…</string>
+    <string name="toast_trip_complete">Trip complete. Log files updated.</string>
 
     <string name="notification_speed_units">" MPH"</string>
     <string name="notification_last_fix_text">"Last Fix:"</string>

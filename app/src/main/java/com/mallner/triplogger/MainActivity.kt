@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.annotation.StringRes
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -143,10 +145,10 @@ fun TripLoggerApp() {
                     icon = {
                         Icon(
                             destination.icon,
-                            contentDescription = destination.label
+                            contentDescription = stringResource(destination.labelRes)
                         )
                     },
-                    label = { Text(destination.label) },
+                    label = { Text(stringResource(destination.labelRes)) },
                     selected = destination == currentDestination,
                     onClick = { currentDestination = destination }
                 )
@@ -192,17 +194,17 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             .verticalScroll(rememberScrollState())
     ) {
         if (!permissionsGranted) {
-            Text("Permissions not granted. Please grant permissions for the app to function correctly.")
+            Text(stringResource(R.string.permissions_missing))
             Button(onClick = onRequestPermissions) {
-                Text("Enable Permissions")
+                Text(stringResource(R.string.permissions_enable))
             }
             return@Column
         }
 
         // ------------------------------------------------------------- Controls
         SwitchRow(
-            label = "Service Enabled",
-            caption = if (tempLocationMissing) "Choose a Temporary Storage Location in Settings first" else null,
+            label = stringResource(R.string.home_service_enabled),
+            caption = if (tempLocationMissing) stringResource(R.string.home_service_needs_temp) else null,
             checked = appSettings.serviceEnabled && !tempLocationMissing,
             enabled = !tempLocationMissing,
             onCheckedChange = { enabled ->
@@ -218,14 +220,14 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
         )
         if (tempLocationMissing) {
             Text(
-                text = "Logging stays off until a temporary folder is chosen.",
+                text = stringResource(R.string.home_logging_blocked),
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 13.sp
             )
         }
         SwitchRow(
-            label = "Force Logging",
-            caption = "Always log when service is enabled",
+            label = stringResource(R.string.home_force_logging),
+            caption = stringResource(R.string.home_force_logging_caption),
             checked = appSettings.forceLogging,
             onCheckedChange = { coroutineScope.launch { appSettingsRepository.updateForceLogging(it) } }
         )
@@ -245,20 +247,22 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     .background(lightColor, CircleShape)
             )
             Spacer(modifier = Modifier.width(10.dp))
+            val trigger = triggeredBy
             Column {
                 Text(
                     text = when {
-                        !serviceEnabled -> "Idle - service off"
-                        isLogging && triggeredBy == "manual" -> "Logging - started manually"
-                        isLogging && triggeredBy != null -> "Logging - triggered by \"$triggeredBy\""
-                        isLogging -> "Logging"
-                        else -> "Armed - waiting for a trigger device"
+                        !serviceEnabled -> stringResource(R.string.home_light_idle)
+                        isLogging && trigger == "manual" -> stringResource(R.string.home_light_manual)
+                        isLogging && trigger != null -> stringResource(R.string.home_light_triggered, trigger)
+                        isLogging -> stringResource(R.string.home_light_logging)
+                        else -> stringResource(R.string.home_light_armed)
                     },
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp
                 )
                 Text(
-                    text = currentLogFile?.let { "Recording: $it" } ?: "No trip in progress",
+                    text = currentLogFile?.let { stringResource(R.string.home_recording, it) }
+                        ?: stringResource(R.string.home_no_trip),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -277,14 +281,8 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("New Trip")
+            Text(stringResource(R.string.home_new_trip))
         }
-        Text(
-            text = "Start a new trip log",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp)
-        )
 
         // ------------------------------------------------------------- GPS tile
         if (appSettings.gpsEnabled) {
@@ -295,26 +293,26 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                 else -> Color(0xFFFFB300)
             }
             val gpsStatus = when {
-                !serviceEnabled -> "Service off"
-                !isLogging -> "Waiting for trigger"
-                location == null -> "Waiting for fix"
+                !serviceEnabled -> stringResource(R.string.tile_service_off)
+                !isLogging -> stringResource(R.string.tile_waiting_trigger)
+                location == null -> stringResource(R.string.tile_waiting_fix)
                 else -> null // connected: no status line
             }
             Spacer(modifier = Modifier.height(20.dp))
-            StatusTile(title = "GPS", light = gpsLight, statusText = gpsStatus) {
+            StatusTile(title = stringResource(R.string.gps_tile_title), light = gpsLight, statusText = gpsStatus) {
                 if (location != null) {
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(location.time))
-                    StatusLine("Last fix", time)
+                    StatusLine(stringResource(R.string.gps_last_fix), time)
                     StatusLine(
-                        "Position",
+                        stringResource(R.string.gps_position),
                         String.format(Locale.getDefault(), "%.5f, %.5f", location.latitude, location.longitude)
                     )
                     StatusLine(
-                        "Speed",
-                        String.format(Locale.getDefault(), "%.1f mph", location.speed * 2.23694f)
+                        stringResource(R.string.gps_speed),
+                        stringResource(R.string.gps_speed_value, location.speed * 2.23694f)
                     )
                     if (location.hasAccuracy()) {
-                        StatusLine("Accuracy", String.format(Locale.getDefault(), "±%.0f m", location.accuracy))
+                        StatusLine(stringResource(R.string.gps_accuracy), stringResource(R.string.gps_accuracy_value, location.accuracy))
                     }
                 }
             }
@@ -330,15 +328,15 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                 else -> Color(0xFFFFB300)
             }
             val obdStatus: String? = when {
-                !serviceEnabled -> "Service off"
+                !serviceEnabled -> stringResource(R.string.tile_service_off)
                 connected -> null // hidden when connected
-                obdLink == ObdLinkState.IDLE -> "Idle"
-                obdLink == ObdLinkState.WAITING_FOR_DEVICE -> "Waiting for trigger"
-                obdLink == ObdLinkState.CONNECTING -> "Connecting"
-                else -> "Timed out (retrying)"
+                obdLink == ObdLinkState.IDLE -> stringResource(R.string.tile_idle)
+                obdLink == ObdLinkState.WAITING_FOR_DEVICE -> stringResource(R.string.tile_waiting_trigger)
+                obdLink == ObdLinkState.CONNECTING -> stringResource(R.string.tile_connecting)
+                else -> stringResource(R.string.tile_timed_out)
             }
             Spacer(modifier = Modifier.height(20.dp))
-            StatusTile(title = "OBD-II", light = obdLight, statusText = obdStatus) {
+            StatusTile(title = stringResource(R.string.obd_tile_title), light = obdLight, statusText = obdStatus) {
                 val speedMph = if (connected) obdValues["0D"]?.let { it * TripFormats.KMH_TO_MPH } else null
                 val rpm = if (connected) obdValues["0C"] else null
                 Row(
@@ -347,8 +345,8 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                         .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    Gauge(label = "MPH", value = speedMph, maxValue = 160.0, color = Color(0xFF1464FF))
-                    Gauge(label = "RPM", value = rpm, maxValue = 7000.0, color = Color(0xFFE53935))
+                    Gauge(label = stringResource(R.string.obd_gauge_mph), value = speedMph, maxValue = 160.0, color = Color(0xFF1464FF))
+                    Gauge(label = stringResource(R.string.obd_gauge_rpm), value = rpm, maxValue = 7000.0, color = Color(0xFFE53935))
                 }
             }
         }
@@ -494,9 +492,9 @@ private fun Gauge(
 }
 
 enum class AppDestinations(
-    val label: String,
+    @StringRes val labelRes: Int,
     val icon: ImageVector,
 ) {
-    HOME("Home", Icons.Default.Home),
-    SETTINGS("Settings", Icons.Default.Settings),
+    HOME(R.string.nav_home, Icons.Default.Home),
+    SETTINGS(R.string.nav_settings, Icons.Default.Settings),
 }

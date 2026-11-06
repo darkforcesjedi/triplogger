@@ -412,7 +412,7 @@ class DrivingService : Service() {
         if (!DrivingStatus.isObdConnected.value) return DrivingStatus.obdStatusText.value
         val rpm = lastObdValues["0C"]?.toInt()?.toString() ?: "-"
         val speed = lastObdValues["0D"]?.let { (it * TripFormats.KMH_TO_MPH).toInt().toString() } ?: "-"
-        return "OBD: ${speed}mph ${rpm}rpm"
+        return getString(R.string.notification_obd_summary, speed, rpm)
     }
 
     // -----------------------------------------------------------------------------------------
@@ -432,7 +432,7 @@ class DrivingService : Service() {
             while (isActive) {
                 DrivingStatus.isObdConnected.value = false
                 DrivingStatus.obdLink.value = ObdLinkState.CONNECTING
-                DrivingStatus.obdStatusText.value = "OBD: connecting…"
+                DrivingStatus.obdStatusText.value = getString(R.string.obd_status_connecting)
                 var client: Elm327Client? = null
                 try {
                     var device = connector.resolve(settings.obdDeviceName)
@@ -592,7 +592,7 @@ class DrivingService : Service() {
                 Log.i("DrivingService", "Trip ${result.label} converted (ods=${result.wroteOds} kmz=${result.kmzDayLabel})")
                 runCatching { store.relocate(trip, toSuccess = true) }
                     .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to success", it) }
-                toast("Trip complete. Log files updated.")
+                toast(getString(R.string.toast_trip_complete))
             }
             is FinalizeResult.Skipped -> {
                 Log.i("DrivingService", "Trip ${trip.name} skipped: ${result.reason}")

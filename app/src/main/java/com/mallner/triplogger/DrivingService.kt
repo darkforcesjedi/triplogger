@@ -38,6 +38,11 @@ import java.util.Locale
 
 class DrivingService : Service() {
 
+    companion object {
+        const val ACTION_STOP_SERVICE = "STOP_SERVICE"
+        const val ACTION_NEW_TRIP = "NEW_TRIP"
+    }
+
     private lateinit var appSettingsRepository: AppSettingsRepository
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
@@ -55,8 +60,10 @@ class DrivingService : Service() {
     private var lastObdValues: Map<String, Double?> = emptyMap()
     private val obdConnector by lazy { ObdDeviceConnector(this) }
 
+    @Volatile private var lastSettings: AppSettings? = null
+
     private fun settingsSnapshot(): AppSettings = kotlinx.coroutines.runBlocking {
-        appSettingsRepository.appSettingsFlow.first()
+        appSettingsRepository.appSettingsFlow.first().also { lastSettings = it }
     }
 
     /** Journal store: user-selected temp folder (with pending/success/failed subfolders). */
@@ -109,19 +116,31 @@ class DrivingService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun isDeviceConnected(triggerPattern: String): Boolean {
+    private fun isDeviceConnected(triggerPattern: String): Boolean =
+        connectedTriggerName(triggerPattern) != null
+
+    /** Name of the first connected (or reflection-probed) device matching the pattern. */
+    @SuppressLint("MissingPermission")
+    private fun connectedTriggerName(triggerPattern: String): String? {
         // Check if Bluetooth is enabled
         if (!bluetoothAdapter.isEnabled || triggerPattern.isBlank()) {
-            return false
+            return null
         }
         val pairedDevices: Set<BluetoothDevice>? = try {
             bluetoothAdapter.bondedDevices
         } catch (_: SecurityException) {
             null
         }
-        return pairedDevices?.any {
+        return pairedDevices?.firstOrNull {
             it.bondState == BluetoothDevice.BOND_BONDED && triggerMatches(triggerPattern, it.name) && isConnected(it)
-        } ?: false
+        }?.name
+    }
+
+    /** OBD tile state while no logging session is running. */
+    private fun updateIdleObdLink(settings: AppSettings) {
+        lastSettings = settings
+        DrivingStatus.obdLink.value =
+            if (settings.obdEnabled) ObdLinkState.WAITING_FOR_DEVICE else ObdLinkState.IDLE
     }
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
@@ -140,7 +159,7 @@ class DrivingService : Service() {
                 if (triggerMatches(settings.bluetoothDeviceName, device?.name)) {
                     DrivingStatus.isConnected.value = action == BluetoothDevice.ACTION_ACL_CONNECTED
                     if (action == BluetoothDevice.ACTION_ACL_CONNECTED) {
-                        startLogging(settings)
+                        startLogging(settings, device?.name ?: "device")
                     } else if (action == BluetoothDevice.ACTION_ACL_DISCONNECTED && !settings.forceLogging) {
                         stopLogging()
                     }
@@ -150,7 +169,19 @@ class DrivingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP_SERVICE") {
+        if (intent?.action == ACTION_NEW_TRIP) {
+            // "New Trip" button: close the current trip (converted normally) and
+            // continue logging into a fresh journal. Only meaningful while logging.
+            if (DrivingStatus.isLogging.value) {
+                serviceScope.launch {
+                    val settings = appSettingsRepository.appSettingsFlow.first()
+                    finalizeCurrentJournal()
+                    createJournal(settings)
+                }
+            }
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_STOP_SERVICE) {
             serviceScope.launch {
                 appSettingsRepository.updateServiceEnabled(false)
             }
@@ -169,9 +200,12 @@ class DrivingService : Service() {
                 stopSelf()
                 return@launch
             }
+            updateIdleObdLink(settings)
             DrivingStatus.isConnected.value = isDeviceConnected(settings.bluetoothDeviceName)
-            if (settings.forceLogging || DrivingStatus.isConnected.value) {
-                startLogging(settings)
+            val triggerName = connectedTriggerName(settings.bluetoothDeviceName)
+            when {
+                triggerName != null -> startLogging(settings, triggerName)
+                settings.forceLogging -> startLogging(settings, "manual")
             }
         }
         return START_STICKY
@@ -217,6 +251,8 @@ class DrivingService : Service() {
         super.onDestroy()
         DrivingStatus.isEnabled.value = false
         DrivingStatus.isConnected.value = false
+        DrivingStatus.triggeredBy.value = null
+        DrivingStatus.obdLink.value = ObdLinkState.IDLE
         unregisterReceiver(bluetoothReceiver)
         stopLogging()
         serviceScope.cancel()
@@ -230,7 +266,7 @@ class DrivingService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun startLogging(settings: AppSettings) {
+    private fun startLogging(settings: AppSettings, trigger: String? = null) {
         if (DrivingStatus.isLogging.value) return
         if (settings.tempLocationUri.isEmpty()) {
             // No journal location = no logging at all (requirement: nothing may run unlogged)
@@ -241,8 +277,10 @@ class DrivingService : Service() {
             Log.w("DrivingService", "Not logging: neither GPS nor OBD is enabled")
             return
         }
-        Log.d("DrivingService", "Started logging")
+        Log.d("DrivingService", "Started logging (trigger: $trigger)")
         DrivingStatus.isLogging.value = true
+        DrivingStatus.triggeredBy.value =
+            trigger ?: connectedTriggerName(settings.bluetoothDeviceName) ?: "manual"
 
         val notification = notificationManager.buildInitialNotification(
             getString(R.string.service_enabled),
@@ -262,9 +300,12 @@ class DrivingService : Service() {
     private fun stopLogging() {
         Log.d("DrivingService", "Stopped logging")
         DrivingStatus.isLogging.value = false
+        DrivingStatus.triggeredBy.value = null
         DrivingStatus.isObdConnected.value = false
         DrivingStatus.obdValues.value = emptyMap()
         lastObdValues = emptyMap()
+        DrivingStatus.obdLink.value =
+            if (lastSettings?.obdEnabled == true) ObdLinkState.WAITING_FOR_DEVICE else ObdLinkState.IDLE
 
         obdJob?.cancel()
         obdJob = null
@@ -322,11 +363,17 @@ class DrivingService : Service() {
                 currentJournal
             }
 
-            // Rollover: close this trip and start a fresh journal past the size cap
-            if (journal != null && journal.approxBytes > settings.maxLogFileSize) {
-                finalizeCurrentJournal()
-                createJournal(settings)
-                journal = synchronized(journalLock) { currentJournal }
+            // Segmented journaling: when the current segment passes the size cap,
+            // continue the SAME trip in a new pair of files (no new trip, no finalize).
+            if (journal != null && settings.splitEnabled &&
+                journal.approxBytes > settings.maxSegmentSizeKb * 1024
+            ) {
+                try {
+                    journal.split()
+                    Log.i("DrivingService", "Journal ${journal.tripId} split at segment ${journal.segmentCount}")
+                } catch (e: Exception) {
+                    Log.e("DrivingService", "Segment split failed", e)
+                }
             }
             journal ?: return@launch
 
@@ -375,6 +422,7 @@ class DrivingService : Service() {
     private fun startObdPolling(settings: AppSettings) {
         if (!settings.obdEnabled || settings.obdDeviceName.isBlank()) {
             DrivingStatus.obdStatusText.value = null
+            DrivingStatus.obdLink.value = ObdLinkState.IDLE
             return
         }
         obdJob?.cancel()
@@ -383,6 +431,7 @@ class DrivingService : Service() {
             var backoffMs = 2_000L
             while (isActive) {
                 DrivingStatus.isObdConnected.value = false
+                DrivingStatus.obdLink.value = ObdLinkState.CONNECTING
                 DrivingStatus.obdStatusText.value = "OBD: connecting…"
                 var client: Elm327Client? = null
                 try {
@@ -400,6 +449,7 @@ class DrivingService : Service() {
                     client = Elm327Client(device)
                     client.connect()
                     DrivingStatus.isObdConnected.value = true
+                    DrivingStatus.obdLink.value = ObdLinkState.CONNECTED
                     DrivingStatus.obdStatusText.value = null
                     backoffMs = 2_000L
                     pollLoop(client, settings)

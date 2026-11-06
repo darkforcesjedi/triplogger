@@ -17,7 +17,8 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 data class AppSettings(
     val bluetoothDeviceName: String,
     val loggingFrequency: Int,
-    val maxLogFileSize: Long,
+    val splitEnabled: Boolean,
+    val maxSegmentSizeKb: Long,
     val forceLogging: Boolean,
     val storageLocationUri: String,
     val serviceEnabled: Boolean,
@@ -38,7 +39,8 @@ data class AppSettings(
 object AppSettingsKeys {
     val BLUETOOTH_DEVICE_NAME = stringPreferencesKey("bluetooth_device_name")
     val LOGGING_FREQUENCY = intPreferencesKey("logging_frequency")
-    val MAX_LOG_FILE_SIZE = longPreferencesKey("max_log_file_size")
+    val SPLIT_ENABLED = booleanPreferencesKey("split_enabled")
+    val MAX_SEGMENT_SIZE_KB = longPreferencesKey("max_segment_size_kb")
     val FORCE_LOGGING = booleanPreferencesKey("force_logging")
     val SERVICE_ENABLED = booleanPreferencesKey("logging_service_enabled")
     val STORAGE_LOCATION_URI = stringPreferencesKey("storage_location_uri")
@@ -72,9 +74,15 @@ class AppSettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun updateMaxLogFileSize(size: Long) {
+    suspend fun updateSplitEnabled(enabled: Boolean) {
         context.dataStore.edit {
-            it[AppSettingsKeys.MAX_LOG_FILE_SIZE] = size
+            it[AppSettingsKeys.SPLIT_ENABLED] = enabled
+        }
+    }
+
+    suspend fun updateMaxSegmentSizeKb(sizeKb: Long) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.MAX_SEGMENT_SIZE_KB] = sizeKb.coerceIn(16L, 1_048_576L)
         }
     }
 
@@ -159,7 +167,8 @@ class AppSettingsRepository(private val context: Context) {
     private fun mapAppSettings(preferences: Preferences): AppSettings {
         val bluetoothDeviceName = preferences[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] ?: ""
         val loggingFrequency = preferences[AppSettingsKeys.LOGGING_FREQUENCY] ?: 10
-        val maxLogFileSize = preferences[AppSettingsKeys.MAX_LOG_FILE_SIZE] ?: 1024 * 1024 // 1MB default
+        val splitEnabled = preferences[AppSettingsKeys.SPLIT_ENABLED] ?: false
+        val maxSegmentSizeKb = preferences[AppSettingsKeys.MAX_SEGMENT_SIZE_KB] ?: 10 * 1024L // 10 MB default
         val forceLogging = preferences[AppSettingsKeys.FORCE_LOGGING] ?: false
         val serviceEnabled = preferences[AppSettingsKeys.SERVICE_ENABLED] ?: false
         val storageLocationUri = preferences[AppSettingsKeys.STORAGE_LOCATION_URI] ?: ""
@@ -176,7 +185,7 @@ class AppSettingsRepository(private val context: Context) {
         val kmzLocationUri = preferences[AppSettingsKeys.KMZ_LOCATION_URI] ?: ""
         val odsLocationUri = preferences[AppSettingsKeys.ODS_LOCATION_URI] ?: ""
         return AppSettings(
-            bluetoothDeviceName, loggingFrequency, maxLogFileSize, forceLogging, storageLocationUri, serviceEnabled,
+            bluetoothDeviceName, loggingFrequency, splitEnabled, maxSegmentSizeKb, forceLogging, storageLocationUri, serviceEnabled,
             gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
             tempLocationUri, kmzLocationUri, odsLocationUri
         )

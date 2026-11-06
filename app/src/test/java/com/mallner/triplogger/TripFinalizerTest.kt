@@ -112,7 +112,7 @@ class TripFinalizerTest {
         val result = TripFinalizer.finalize(trip, FinalizeSettings(listOf("0C", "0D"), true, false), DirStorage(tmp.newFolder("kmz")), null, FakePlotRenderer)
         store.relocate(trip, toSuccess = result is FinalizeResult.Completed)
 
-        assertTrue(java.io.File(journalRoot, "success/20260119_120000/gps.csv").isFile)
+        assertTrue(java.io.File(journalRoot, "success/20260119_120000/gps-000.csv").isFile)
         assertEquals(0, store.unfinishedTrips().size)
     }
 }

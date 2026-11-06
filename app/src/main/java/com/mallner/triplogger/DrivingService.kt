@@ -162,6 +162,13 @@ class DrivingService : Service() {
 
         serviceScope.launch {
             val settings = appSettingsRepository.appSettingsFlow.first()
+            if (settings.tempLocationUri.isEmpty()) {
+                // Without a temporary storage folder logging can never start; do not
+                // linger as a foreground service (Home switch is disabled meanwhile).
+                Log.w("DrivingService", "Temporary storage not set; stopping service")
+                stopSelf()
+                return@launch
+            }
             DrivingStatus.isConnected.value = isDeviceConnected(settings.bluetoothDeviceName)
             if (settings.forceLogging || DrivingStatus.isConnected.value) {
                 startLogging(settings)

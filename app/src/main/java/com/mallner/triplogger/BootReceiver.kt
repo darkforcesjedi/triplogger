@@ -14,7 +14,7 @@ class BootReceiver : BroadcastReceiver() {
             val appSettingsRepository = AppSettingsRepository(context)
             CoroutineScope(Dispatchers.IO).launch {
                 val settings = appSettingsRepository.appSettingsFlow.first()
-                if (settings.serviceEnabled) {
+                if (settings.serviceEnabled && settings.tempLocationUri.isNotEmpty()) {
                     context.startService(Intent(context, DrivingService::class.java))
                 }
             }

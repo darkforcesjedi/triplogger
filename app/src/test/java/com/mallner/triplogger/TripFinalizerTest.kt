@@ -120,12 +120,14 @@ class TripFinalizerTest {
         var speedUnit: String = ""
         var tzOffsetMin: Int? = null
         var tzChanges: List<Pair<Long, String>> = emptyList()
+        var dateChanges: List<Pair<Long, String>> = emptyList()
         var obdSpeeds: List<Pair<Long, Float>> = emptyList()
         var gpsSpeeds: List<Pair<Long, Float>> = emptyList()
-        override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
+        override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
             this.speedUnit = speedUnit
             this.tzOffsetMin = tzOffsetMin
             this.tzChanges = tzChanges
+            this.dateChanges = dateChanges
             this.obdSpeeds = obdSpeeds
             this.gpsSpeeds = gpsSpeeds
             return "PNG:$label".toByteArray()
@@ -138,6 +140,30 @@ class TripFinalizerTest {
         journal.append(ObdRow(day1Noon, day1Noon, 37.39, -122.08, 40.0, mapOf("0C" to 1500.0, "0D" to 45.0)))
         journal.close()
         return Pair(journal, FinalizeSettings(selected, generateKmz = true, saveOds = false))
+    }
+
+    @Test
+    fun dateChangeIsMarkedAcrossMidnight() {
+        val before = 1793940900000L // 2026-11-06 04:55 UTC = local -05:00 on 11-05 23:55
+        val after = 1793941500000L  // 05:05 UTC = local -05:00 on 11-06 00:05
+        val rows = listOf(
+            GpsRow(before, before, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = -300),
+            GpsRow(after, after, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = -300)
+        )
+        assertEquals(listOf(Pair(after, "11-06")), TripFinalizer.dateChanges(rows, emptyList(), -300))
+    }
+
+    @Test
+    fun dateChangeFromZoneJumpAlone() {
+        val utcBefore = 1793901600000L // 2026-11-05 18:00 UTC: day 11-05 at +00:00, 11-06 02:00 at +08:00
+        val rows = listOf(
+            GpsRow(utcBefore, utcBefore, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = 0),
+            GpsRow(utcBefore + 60_000, utcBefore + 60_000, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = 8 * 60)
+        )
+        // crossing into UTC+8 rolls the wall clock to the next day without midnight UTC
+        val changes = TripFinalizer.dateChanges(rows, emptyList(), 0)
+        assertEquals(1, changes.size)
+        assertEquals("11-06", changes.single().second)
     }
 
     @Test
@@ -195,6 +221,7 @@ class TripFinalizerTest {
         assertTrue(result is FinalizeResult.Completed)
         assertEquals(-300, renderer.tzOffsetMin!!)              // axis uses the start-of-trip zone
         assertEquals(Pair(day1Noon + 5000L, "-04:00"), renderer.tzChanges.single())
+        assertEquals(emptyList<Pair<Long, String>>(), renderer.dateChanges) // noon -> noon, no day flip
     }
 
     @Test

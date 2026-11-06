@@ -179,13 +179,11 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             }
             ToggleRow(
                 label = stringResource(R.string.obd_show_hybrid_charge),
-                caption = stringResource(R.string.obd_show_hybrid_charge_caption),
                 checked = appSettings.showHybridCharge,
                 onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateShowHybridCharge(on) } }
             )
             ToggleRow(
                 label = stringResource(R.string.obd_show_fuel_level),
-                caption = stringResource(R.string.obd_show_fuel_level_caption),
                 checked = appSettings.showFuelLevel,
                 onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateShowFuelLevel(on) } }
             )

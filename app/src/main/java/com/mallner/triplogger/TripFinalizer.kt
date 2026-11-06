@@ -122,6 +122,26 @@ object TripFinalizer {
         return changes
     }
 
+    /**
+     * Local calendar-day changes across the trip as (time, new "MM-dd") - either
+     * from plain elapsed time or from an offset jump moving the wall clock over
+     * midnight.
+     */
+    internal fun dateChanges(gpsRows: List<GpsRow>, obdRows: List<ObdRow>, startTz: Int?): List<Pair<Long, String>> {
+        val samples = (gpsRows.map { Pair(it.gpsTime, it.tzOffsetMin ?: startTz) } +
+            obdRows.map { Pair(it.ts, it.tzOffsetMin ?: startTz) })
+            .filter { it.first > 0L }
+            .sortedBy { it.first }
+        val changes = ArrayList<Pair<Long, String>>()
+        var previousDay: String? = null
+        for ((time, offset) in samples) {
+            val day = TripFormats.dayLabel(time, offset)
+            if (previousDay != null && day != previousDay) changes.add(Pair(time, day.substring(5)))
+            previousDay = day
+        }
+        return changes
+    }
+
     fun buildTrip(
         label: String,
         trackId: String,
@@ -142,6 +162,16 @@ object TripFinalizer {
             .mapNotNull { row -> row.values["0D"]?.let { Pair(row.ts, UnitFormat.convert("km/h", it, us).first.toFloat()) } }
 
         if (points.isEmpty() && gpsSpeeds.isEmpty() && obdSpeeds.isEmpty()) return null
-        return TripTrack(trackId, label, UnitFormat.speedUnitLabel(us), points, obdSpeeds, gpsSpeeds, tzChanges(gpsRows, obdRows, startTz), startTz)
+        return TripTrack(
+            trackId = trackId,
+            label = label,
+            speedUnit = UnitFormat.speedUnitLabel(us),
+            points = points,
+            obdSpeeds = obdSpeeds,
+            gpsSpeeds = gpsSpeeds,
+            tzChanges = tzChanges(gpsRows, obdRows, startTz),
+            dateChanges = dateChanges(gpsRows, obdRows, startTz),
+            tzOffsetMin = startTz
+        )
     }
 }

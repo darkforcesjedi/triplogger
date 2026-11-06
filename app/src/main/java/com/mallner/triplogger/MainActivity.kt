@@ -487,14 +487,15 @@ private fun ObdIndicator(iconRes: Int, value: Double?) {
             modifier = Modifier.size(15.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.width(2.dp))
-        // fixed width right-aligned: "--" -> "100%" never shifts the neighboring indicator
+        Spacer(modifier = Modifier.width(4.dp))
+        // fixed width left-aligned next to its icon: "--" -> "100%" never shifts
+        // the neighboring indicator
         Text(
             text = text,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.End,
+            textAlign = TextAlign.Start,
             maxLines = 1,
             modifier = Modifier.width(40.dp)
         )

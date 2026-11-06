@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.util.Log
-import java.io.ByteArrayOutputStream
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -19,6 +18,10 @@ import kotlin.math.min
  * 200 px per minute of log time (capped at 38400 px wide), 720 px tall,
  * white background, gray grid in 10 mph (or 20 km/h) / 60 s steps, red dots = OBD speed,
  * blue dots = GPS speed, FreeSans 24 px labels.
+ *
+ * Output is a 4-color (white/gray/red/blue) indexed PNG at 2 bits per pixel
+ * via [IndexedPng] - the palette Bitmap.compress cannot produce and the
+ * reason the converter's plots stayed small.
  */
 class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
 
@@ -28,6 +31,14 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
         private const val MAX_WIDTH = 38400
         private const val HEIGHT = 720
         private const val FONT_PX = 24f
+
+        /** Fixed 4-color palette, index order is the PNG palette order. */
+        private val PALETTE = intArrayOf(
+            0xFFFFFFFF.toInt(), // 0 white
+            0xFF808080.toInt(), // 1 grid / label gray
+            0xFFFF0000.toInt(), // 2 OBD speed red
+            0xFF0000FF.toInt()  // 3 GPS speed blue
+        )
     }
 
     private val font: Typeface by lazy {
@@ -78,11 +89,15 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.WHITE)
 
-            val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            val gridPaint = Paint().apply {
                 color = Color.rgb(128, 128, 128)
                 strokeWidth = 1f
             }
-            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            // PIL drew text with binary glyph masks (the converter rendered onto a
+            // palette-mode image), so no antialiasing here either: every pixel stays
+            // exactly one of the 4 palette colors and strokes never break up.
+            val textPaint = Paint().apply {
+                isAntiAlias = false
                 color = Color.rgb(128, 128, 128)
                 typeface = font
                 textSize = FONT_PX
@@ -174,12 +189,13 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
                 for ((changeMs, dateLabel) in dateChanges) marker(changeMs, dateLabel, dateLine)
             }
 
-            // Data points: red = OBD (dataset 1), blue = GPS (dataset 2)
-            val redPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            // Data points: red = OBD (dataset 1), blue = GPS (dataset 2).
+            // No antialiasing so dot pixels stay exactly the palette colors.
+            val redPaint = Paint().apply {
                 color = Color.RED
                 style = Paint.Style.FILL
             }
-            val bluePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            val bluePaint = Paint().apply {
                 color = Color.BLUE
                 style = Paint.Style.FILL
             }
@@ -196,9 +212,11 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
                 canvas.drawCircle(x, y, 3f, bluePaint)
             }
 
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            return out.toByteArray()
+            // 4-color indexed encode, one bitmap row at a time (max plot is
+            // 38400x720; a full getPixels would allocate ~110 MB)
+            return IndexedPng.encode(w, h, PALETTE) { y, row ->
+                bitmap.getPixels(row, 0, w, 0, y, w, 1)
+            }
         } finally {
             bitmap.recycle()
         }

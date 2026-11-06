@@ -39,7 +39,7 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
         }
     }
 
-    override fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
+    override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
         var minx = Double.MAX_VALUE
         var maxx = -Double.MAX_VALUE
         if (obdSpeeds.isNotEmpty()) {
@@ -110,7 +110,10 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
 
             // Vertical grid lines (every minute) + time labels
             var xpos = (ceil(minx / 60.0) * 60 - minx) * scaleX
-            val timeFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+            val timeFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).apply {
+                // axis labels are rendered in the time zone the trip started in
+                timeZone = TripFormats.offsetTimeZone(tzOffsetMin)
+            }
             while (xpos < w) {
                 if (xpos > 30 && xpos < w - 30) {
                     canvas.drawLine(xpos.toFloat(), 0f, xpos.toFloat(), h.toFloat(), gridPaint)
@@ -125,6 +128,29 @@ class AndroidPlotRenderer(private val context: Context) : PlotRenderer {
                     drawTopLeftText(canvas, stime, (xpos + 1).toFloat(), 1f, textPaint)
                 }
                 xpos += gridX
+            }
+
+            // Time zone / DST changes: dashed vertical gridline + rotated "+hh:mm" label
+            if (tzChanges.isNotEmpty()) {
+                val dashPaint = Paint(gridPaint).apply {
+                    color = Color.rgb(96, 96, 96)
+                    pathEffect = android.graphics.DashPathEffect(floatArrayOf(9f, 7f), 0f)
+                }
+                val tzPaint = Paint(textPaint).apply { textSize = FONT_PX * 0.8f }
+                for ((changeMs, offsetLabel) in tzChanges) {
+                    val tx = ((changeMs / 1000.0 - minx) * scaleX).toFloat()
+                    if (tx < 2f || tx > w - 2f) continue
+                    canvas.drawLine(tx, 0f, tx, h.toFloat(), dashPaint)
+                    // Label just right of the line, vertically centered, read bottom-up
+                    val cx = (tx + 12f).coerceAtMost(w - 14f)
+                    val cy = h / 2f
+                    val tw = tzPaint.measureText(offsetLabel)
+                    val th = tzPaint.descent() - tzPaint.ascent()
+                    canvas.save()
+                    canvas.rotate(-90f, cx, cy)
+                    canvas.drawText(offsetLabel, cx - tw / 2f, cy + th / 2f, tzPaint)
+                    canvas.restore()
+                }
             }
 
             // Data points: red = OBD (dataset 1), blue = GPS (dataset 2)

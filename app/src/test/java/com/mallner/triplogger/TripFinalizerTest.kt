@@ -118,10 +118,14 @@ class TripFinalizerTest {
 
     private class CaptureRenderer : PlotRenderer {
         var speedUnit: String = ""
+        var tzOffsetMin: Int? = null
+        var tzChanges: List<Pair<Long, String>> = emptyList()
         var obdSpeeds: List<Pair<Long, Float>> = emptyList()
         var gpsSpeeds: List<Pair<Long, Float>> = emptyList()
-        override fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
+        override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
             this.speedUnit = speedUnit
+            this.tzOffsetMin = tzOffsetMin
+            this.tzChanges = tzChanges
             this.obdSpeeds = obdSpeeds
             this.gpsSpeeds = gpsSpeeds
             return "PNG:$label".toByteArray()
@@ -168,5 +172,55 @@ class TripFinalizerTest {
         assertEquals("km/h", metricRenderer.speedUnit)
         assertEquals(45.0, metricRenderer.obdSpeeds.single().second.toDouble(), 0.001)
         assertEquals(36.0, metricRenderer.gpsSpeeds.single().second.toDouble(), 0.001) // 10 m/s
+    }
+
+    @Test
+    fun dstChangeIsMarkedForThePlot() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val journal = store.createTrip("20260119_120000", day1Noon, listOf("0C"))
+        repeat(5) { i ->
+            journal.append(GpsRow(day1Noon + i * 1000L, day1Noon + i * 1000L, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = -300))
+        }
+        repeat(5) { i ->
+            journal.append(GpsRow(day1Noon + (5 + i) * 1000L, day1Noon + (5 + i) * 1000L, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = -240))
+        }
+        journal.close()
+
+        val renderer = CaptureRenderer()
+        val result = TripFinalizer.finalize(
+            store.orphanOf(journal),
+            FinalizeSettings(listOf("0C"), generateKmz = true, saveOds = false),
+            DirStorage(tmp.newFolder("kmz")), null, renderer
+        )
+        assertTrue(result is FinalizeResult.Completed)
+        assertEquals(-300, renderer.tzOffsetMin!!)              // axis uses the start-of-trip zone
+        assertEquals(Pair(day1Noon + 5000L, "-04:00"), renderer.tzChanges.single())
+    }
+
+    @Test
+    fun odsTimesIncludeTheOffset() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val odsDir = tmp.newFolder("ods")
+        val journal = store.createTrip("20260119_120000", day1Noon, listOf("0C"))
+        journal.append(GpsRow(day1Noon, day1Noon, 37.39, -122.08, 40.0, 10f, 0f, 5f, tzOffsetMin = -300))
+        journal.append(ObdRow(day1Noon, day1Noon, 37.39, -122.08, 40.0, mapOf("0C" to 800.0), tzOffsetMin = -300))
+        journal.close()
+        val result = TripFinalizer.finalize(
+            store.orphanOf(journal),
+            FinalizeSettings(listOf("0C"), generateKmz = false, saveOds = true),
+            null, DirStorage(odsDir), FakePlotRenderer
+        )
+        assertTrue(result is FinalizeResult.Completed)
+
+        val ods = odsDir.listFiles()!!.first()
+        var content = ""
+        java.util.zip.ZipInputStream(java.io.FileInputStream(ods)).use { z ->
+            var e = z.nextEntry
+            while (e != null) {
+                if (e.name.endsWith("content.xml")) content = z.readBytes().toString(Charsets.UTF_8)
+                e = z.nextEntry
+            }
+        }
+        assertTrue("ods time lacks the recorded offset: $content", content.contains("-05:00</text:p>"))
     }
 }

@@ -2,6 +2,7 @@ package com.mallner.triplogger
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -232,5 +233,48 @@ class TripJournalTest {
         assertTrue(both.shouldDelete(now - 40 * day, 60_000, now))   // too old
         assertTrue(both.shouldDelete(now, 10_000, now))              // too short
         assertFalse(both.shouldDelete(now - 10 * day, 60_000, now))  // keep
+    }
+
+    @Test
+    fun rowsRecordTheirUtcOffset() {
+        val store = FileJournalStore(tmp.newFolder("journal13"))
+        val journal = store.createTrip("20260119_060000", 1768798800000L, listOf("0C"))
+        journal.append(GpsRow(1000, 1000, 37.39, -122.08, 40.0, 12.5f, 180f, 5f, tzOffsetMin = -300))
+        journal.append(ObdRow(1500, null, null, null, null, mapOf("0C" to 900.0), tzOffsetMin = -300))
+        journal.append(GpsRow(2000, 2000, 37.39, -122.08, 40.0, 0f, 0f, 0f)) // auto-fills device offset
+        journal.close()
+
+        val trip = store.orphanOf(journal)
+        val gps = trip.readGpsRows()
+        assertEquals(-300, gps[0].tzOffsetMin!!)
+        assertEquals(TripFormats.deviceOffsetMin(2000), gps[1].tzOffsetMin)
+        assertEquals(-300, trip.readObdRows(trip.pids())[0].tzOffsetMin!!)
+    }
+
+    @Test
+    fun legacyRowsWithoutTzColumnParseAsNull() {
+        val root = tmp.newFolder("journal14")
+        val dir = java.io.File(root, "pending/20260119_060000")
+        dir.mkdirs()
+        java.io.File(dir, "trip.properties").writeText("trip_id=20260119_060000\nstart_ms=1768798800000\npids=0C\n")
+        java.io.File(dir, "gps-000.csv").writeText(LiveJournal.GPS_HEADER + "\n1000,1000,37.39,-122.08,40.0,12.5,180,5\n")
+        java.io.File(dir, "obd-000.csv").writeText("ts,gps_time,latitude,longitude,altitude,0C,tz_offset_min\n1500,1000,37.39,-122.08,40.0,1726\n")
+
+        val store = FileJournalStore(root)
+        val trip = store.unfinishedTrips().single()
+        assertNull(trip.readGpsRows().single().tzOffsetMin)
+        assertNull(trip.readObdRows(trip.pids()).single().tzOffsetMin)
+        assertNull(trip.tzId())
+        assertNull(trip.tzOffsetMin())
+    }
+
+    @Test
+    fun tripPropertiesRecordZoneAtCreation() {
+        val store = FileJournalStore(tmp.newFolder("journal15"))
+        val journal = store.createTrip("20260119_060000", 1768798800000L, listOf("0C"))
+        journal.close()
+        val trip = store.orphanOf(journal)
+        assertEquals(TripFormats.deviceZoneId(), trip.tzId())
+        assertEquals(TripFormats.deviceOffsetMin(1768798800000L), trip.tzOffsetMin())
     }
 }

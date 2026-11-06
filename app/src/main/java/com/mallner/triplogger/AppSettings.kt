@@ -39,7 +39,14 @@ data class AppSettings(
     /** Delete archived trip journals older than N days (0 = keep forever) */
     val archiveRetentionDays: Int = 0,
     /** Delete archived trip journals shorter than N seconds (0 = keep all) */
-    val archiveMinTripSec: Int = 0
+    val archiveMinTripSec: Int = 0,
+    /** Home OBD card corner indicators */
+    val showHybridCharge: Boolean = false,
+    val showFuelLevel: Boolean = false,
+    /** Gauge scales (top of the dial); speed max is kept per unit system */
+    val speedGaugeMaxUs: Int = 160,      // mph, 10..200 step 5
+    val speedGaugeMaxMetric: Int = 260,  // km/h, 10..350 step 5
+    val rpmGaugeMax: Int = 7000          // 1000..15000 step 500
 )
 
 object AppSettingsKeys {
@@ -63,6 +70,11 @@ object AppSettingsKeys {
     val US_UNITS = booleanPreferencesKey("us_units")
     val ARCHIVE_RETENTION_DAYS = intPreferencesKey("archive_retention_days")
     val ARCHIVE_MIN_TRIP_SEC = intPreferencesKey("archive_min_trip_sec")
+    val SHOW_HYBRID_CHARGE = booleanPreferencesKey("show_hybrid_charge")
+    val SHOW_FUEL_LEVEL = booleanPreferencesKey("show_fuel_level")
+    val SPEED_GAUGE_MAX_US = intPreferencesKey("speed_gauge_max_us")
+    val SPEED_GAUGE_MAX_METRIC = intPreferencesKey("speed_gauge_max_metric")
+    val RPM_GAUGE_MAX = intPreferencesKey("rpm_gauge_max")
 }
 
 class AppSettingsRepository(private val context: Context) {
@@ -191,6 +203,32 @@ class AppSettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun updateShowHybridCharge(enabled: Boolean) {
+        context.dataStore.edit { it[AppSettingsKeys.SHOW_HYBRID_CHARGE] = enabled }
+    }
+
+    suspend fun updateShowFuelLevel(enabled: Boolean) {
+        context.dataStore.edit { it[AppSettingsKeys.SHOW_FUEL_LEVEL] = enabled }
+    }
+
+    fun snapTo(value: Int, step: Int, min: Int, max: Int): Int =
+        (value / step * step).coerceIn(min, max)
+
+    suspend fun updateSpeedGaugeMax(us: Boolean, value: Int) {
+        if (us) {
+            val v = snapTo(value, 5, 10, 200)
+            context.dataStore.edit { it[AppSettingsKeys.SPEED_GAUGE_MAX_US] = v }
+        } else {
+            val v = snapTo(value, 5, 10, 350)
+            context.dataStore.edit { it[AppSettingsKeys.SPEED_GAUGE_MAX_METRIC] = v }
+        }
+    }
+
+    suspend fun updateRpmGaugeMax(value: Int) {
+        val v = snapTo(value, 500, 1000, 15000)
+        context.dataStore.edit { it[AppSettingsKeys.RPM_GAUGE_MAX] = v }
+    }
+
     private fun mapAppSettings(preferences: Preferences): AppSettings {
         val bluetoothDeviceName = preferences[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] ?: ""
         val loggingFrequency = preferences[AppSettingsKeys.LOGGING_FREQUENCY] ?: 10
@@ -214,10 +252,16 @@ class AppSettingsRepository(private val context: Context) {
         val usUnits = preferences[AppSettingsKeys.US_UNITS] ?: true
         val archiveRetentionDays = preferences[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] ?: 0
         val archiveMinTripSec = preferences[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] ?: 0
+        val showHybridCharge = preferences[AppSettingsKeys.SHOW_HYBRID_CHARGE] ?: false
+        val showFuelLevel = preferences[AppSettingsKeys.SHOW_FUEL_LEVEL] ?: false
+        val speedGaugeMaxUs = preferences[AppSettingsKeys.SPEED_GAUGE_MAX_US] ?: 160
+        val speedGaugeMaxMetric = preferences[AppSettingsKeys.SPEED_GAUGE_MAX_METRIC] ?: 260
+        val rpmGaugeMax = preferences[AppSettingsKeys.RPM_GAUGE_MAX] ?: 7000
         return AppSettings(
             bluetoothDeviceName, loggingFrequency, splitEnabled, maxSegmentSizeKb, forceLogging, storageLocationUri, serviceEnabled,
             gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
-            tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, archiveRetentionDays, archiveMinTripSec
+            tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, archiveRetentionDays, archiveMinTripSec,
+            showHybridCharge, showFuelLevel, speedGaugeMaxUs, speedGaugeMaxMetric, rpmGaugeMax
         )
     }
 }

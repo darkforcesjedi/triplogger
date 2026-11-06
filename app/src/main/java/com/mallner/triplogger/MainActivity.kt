@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,6 +62,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -139,6 +141,8 @@ fun TripLoggerApp() {
     }
 
     NavigationSuiteScaffold(
+        // keep content above the soft keyboard instead of letting the window pan
+        modifier = Modifier.imePadding(),
         navigationSuiteItems = {
             AppDestinations.entries.forEach { destination ->
                 item(
@@ -341,9 +345,23 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                 else -> stringResource(R.string.tile_timed_out)
             }
             Spacer(modifier = Modifier.height(20.dp))
-            StatusTile(title = stringResource(R.string.obd_tile_title), light = obdLight, statusText = obdStatus) {
+            StatusTile(
+                title = stringResource(R.string.obd_tile_title),
+                light = obdLight,
+                statusText = obdStatus,
+                trailing = if (appSettings.showHybridCharge || appSettings.showFuelLevel) {
+                    {
+                        if (appSettings.showHybridCharge) {
+                            ObdIndicator(R.drawable.ic_hybrid_battery, obdValues["5B"])
+                        }
+                        if (appSettings.showFuelLevel) {
+                            ObdIndicator(R.drawable.ic_fuel_level, obdValues["2F"])
+                        }
+                    }
+                } else null
+            ) {
                 val speedUnit = stringResource(if (appSettings.usUnits) R.string.unit_mph else R.string.unit_kph)
-                val speedMax = if (appSettings.usUnits) 160.0 else 260.0
+                val speedMax = (if (appSettings.usUnits) appSettings.speedGaugeMaxUs else appSettings.speedGaugeMaxMetric).toDouble()
                 val speedMph = if (connected) obdValues["0D"]?.let { UnitFormat.convert("km/h", it, appSettings.usUnits).first } else null
                 val rpm = if (connected) obdValues["0C"] else null
                 Row(
@@ -353,7 +371,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     Gauge(label = speedUnit.uppercase(), value = speedMph, maxValue = speedMax, color = Color(0xFF1464FF))
-                    Gauge(label = stringResource(R.string.obd_gauge_rpm), value = rpm, maxValue = 7000.0, color = Color(0xFFE53935))
+                    Gauge(label = stringResource(R.string.obd_gauge_rpm), value = rpm, maxValue = appSettings.rpmGaugeMax.toDouble(), color = Color(0xFFE53935))
                 }
             }
         }
@@ -395,6 +413,7 @@ private fun StatusTile(
     title: String,
     light: Color,
     statusText: String? = null,
+    trailing: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
@@ -402,7 +421,10 @@ private fun StatusTile(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Box(
                     modifier = Modifier
                         .size(14.dp)
@@ -410,6 +432,10 @@ private fun StatusTile(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(modifier = Modifier.weight(1f))
+                if (trailing != null) {
+                    trailing()
+                }
             }
             if (statusText != null) {
                 Text(
@@ -435,6 +461,31 @@ private fun StatusLine(label: String, value: String) {
             modifier = Modifier.width(90.dp)
         )
         Text(value, fontSize = 14.sp)
+    }
+}
+
+/** Compact icon + value shown in the top-right corner of the OBD-II card. */
+@Composable
+private fun ObdIndicator(iconRes: Int, value: Double?) {
+    val text = if (value == null) stringResource(R.string.obd_indicator_none)
+    else stringResource(R.string.obd_indicator_percent, value)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = 10.dp)
+    ) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = null,
+            modifier = Modifier.size(15.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(2.dp))
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

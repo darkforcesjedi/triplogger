@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 object FakePlotRenderer : PlotRenderer {
-    override fun renderPng(label: String, speedUnit: String, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray =
+    override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray =
         "PNG:$label".toByteArray()
 }
 
@@ -86,5 +86,51 @@ class DailyKmzTest {
             while (e != null) { seen[e.name] = z.readBytes(); e = z.nextEntry }
             pngNamesBefore.forEach { assertTrue("missing $it", seen.containsKey(it)) }
         }
+    }
+
+    @Test
+    fun reprocessedTripReplacesItsPlacemark() {
+        val builder = DailyKmz(renderer = FakePlotRenderer)
+        val first = builder.merge(null, "2026-01-19", listOf(trip("2026-01-19 06:00:00", points = 3)))
+        val rebuilt = builder.merge(first, "2026-01-19", listOf(trip("2026-01-19 06:00:00", points = 7)))
+        val (kml, ids) = DailyKmz.inspect(rebuilt)
+        assertEquals(setOf("2026-01-19 06:00:00"), ids)
+        assertEquals(1, Regex("<Placemark>").findAll(kml!!).count())
+        // the updated data won: 7 coordinates, the 3 old ones are gone
+        assertEquals(7, Regex("<gx:coord>").findAll(kml).count())
+    }
+
+    @Test
+    fun replacementKeepsColorAndOtherTrips() {
+        val builder = DailyKmz(renderer = FakePlotRenderer)
+        val t1 = trip("2026-01-19 06:00:00")
+        var kmz: ByteArray? = null
+        kmz = builder.merge(kmz, "2026-01-19", listOf(t1))
+        kmz = builder.merge(kmz, "2026-01-19", listOf(trip("2026-01-19 07:30:00")))
+        val grown = t1.copy(points = t1.points + t1.points.last())
+        kmz = builder.merge(kmz!!, "2026-01-19", listOf(grown))
+        val (kml, ids) = DailyKmz.inspect(kmz)
+        assertEquals(2, ids.size)
+        assertEquals(2, Regex("<Placemark>").findAll(kml!!).count())
+        val colors = Regex("<color>(\\w+)</color>").findAll(kml).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("FF1400FF", "FF14F0FF"), colors) // original colors, not a new cycle
+        assertEquals(4 + 3, Regex("<gx:coord>").findAll(kml).count()) // 3+1 from t1, 3 from t2
+    }
+
+    @Test
+    fun whenElementsCarryTheRecordedOffset() {
+        val base = 1768797600000L
+        val tzTrip = TripTrack(
+            trackId = "2026-01-19 06:00:00",
+            label = "2026-01-19 06.00.00",
+            speedUnit = "mph",
+            points = listOf(TrackPoint(base, -122.0834, 37.389, 10.0, tzOffsetMin = -300)),
+            obdSpeeds = emptyList(),
+            gpsSpeeds = emptyList()
+        )
+        val (kml, _) = DailyKmz.inspect(
+            DailyKmz(renderer = FakePlotRenderer).merge(null, "2026-01-19", listOf(tzTrip))
+        )
+        assertTrue("when lacks offset: $kml", kml!!.contains("-05:00</when>"))
     }
 }

@@ -48,7 +48,8 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
         val dir = pending.createDirectory(tripId) ?: throw IOException("Cannot create trip directory $tripId")
 
         writeFile(dir, "trip.properties",
-            "trip_id=$tripId\nstart_ms=$startMs\npids=${pids.joinToString(",")}\n")
+            "trip_id=$tripId\nstart_ms=$startMs\npids=${pids.joinToString(",")}\n" +
+                "tz_id=${TripFormats.deviceZoneId()}\ntz_offset_min=${TripFormats.deviceOffsetMin(startMs)}\n")
 
         // Segment files are created lazily: index 0 when the journal opens,
         // higher indices on each split().

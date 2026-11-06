@@ -14,7 +14,9 @@ data class GpsRow(
     val altitude: Double,       // meters, 0.0 when unavailable
     val speedMps: Float,
     val bearing: Float,
-    val accuracyM: Float
+    val accuracyM: Float,
+    /** Minutes east of UTC when the row was recorded (null in legacy journals). */
+    val tzOffsetMin: Int? = null
 )
 
 data class ObdRow(
@@ -23,7 +25,9 @@ data class ObdRow(
     val latitude: Double?,
     val longitude: Double?,
     val altitude: Double?,
-    val values: Map<String, Double?>  // pid hex -> value (null = no response this cycle)
+    val values: Map<String, Double?>,  // pid hex -> value (null = no response this cycle)
+    /** Minutes east of UTC when the row was recorded (null in legacy journals). */
+    val tzOffsetMin: Int? = null
 )
 
 /**
@@ -99,10 +103,13 @@ class LiveJournal(
         private set
 
     companion object {
-        const val GPS_HEADER = "ts,gps_time,latitude,longitude,altitude,speed_mps,bearing,accuracy_m"
+        const val GPS_HEADER = "ts,gps_time,latitude,longitude,altitude,speed_mps,bearing,accuracy_m,tz_offset_min"
         const val OBD_HEADER_PREFIX = "ts,gps_time,latitude,longitude,altitude"
-        fun obdHeader(pids: List<String>): String =
-            if (pids.isEmpty()) OBD_HEADER_PREFIX else OBD_HEADER_PREFIX + "," + pids.joinToString(",")
+        const val TZ_COLUMN = "tz_offset_min"
+        fun obdHeader(pids: List<String>): String {
+            val pidsPart = if (pids.isEmpty()) "" else "," + pids.joinToString(",")
+            return OBD_HEADER_PREFIX + pidsPart + "," + TZ_COLUMN
+        }
     }
 
     init {
@@ -147,7 +154,8 @@ class LiveJournal(
             TripFormats.num(row.altitude, 2),
             TripFormats.num(row.speedMps, 3),
             TripFormats.num(row.bearing, 2),
-            TripFormats.num(row.accuracyM, 2)
+            TripFormats.num(row.accuracyM, 2),
+            (row.tzOffsetMin ?: TripFormats.deviceOffsetMin(row.ts)).toString()
         ).joinToString(",") + "\n"
         gpsWriter.write(line)
         approxBytes += line.length
@@ -163,6 +171,7 @@ class LiveJournal(
             .append(TripFormats.num(row.longitude, 8)).append(',')
             .append(TripFormats.num(row.altitude, 2))
         pids.forEach { hex -> sb.append(',').append(TripFormats.num(row.values[hex], 4)) }
+        sb.append(',').append(row.tzOffsetMin ?: TripFormats.deviceOffsetMin(row.ts))
         sb.append('\n')
         obdWriter.write(sb.toString())
         approxBytes += sb.length
@@ -197,6 +206,12 @@ abstract class OrphanTrip(val name: String) {
         readProps()["pids"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
     fun startMs(): Long = readProps()["start_ms"]?.toLongOrNull() ?: 0L
+
+    /** IANA zone id recorded when the trip started (null in legacy journals). */
+    fun tzId(): String? = readProps()["tz_id"]?.takeIf { it.isNotEmpty() }
+
+    /** Minutes east of UTC when the trip started (null in legacy journals). */
+    fun tzOffsetMin(): Int? = readProps()["tz_offset_min"]?.toIntOrNull()
 
     /** Span of the recorded data (first to last sample), 0 when unknown. */
     fun durationMs(): Long {
@@ -281,7 +296,8 @@ internal fun parseGpsLine(line: String): GpsRow? = try {
         altitude = c[4].toDouble(),
         speedMps = c[5].toFloatOrNull() ?: 0f,
         bearing = c[6].toFloatOrNull() ?: 0f,
-        accuracyM = c[7].toFloatOrNull() ?: 0f
+        accuracyM = c[7].toFloatOrNull() ?: 0f,
+        tzOffsetMin = c.getOrNull(8)?.toIntOrNull()
     )
 } catch (_: Exception) {
     null // truncated line from an abrupt stop
@@ -297,7 +313,8 @@ internal fun parseObdLine(line: String, pids: List<String>): ObdRow? = try {
         latitude = c.getOrNull(2)?.toDoubleOrNull(),
         longitude = c.getOrNull(3)?.toDoubleOrNull(),
         altitude = c.getOrNull(4)?.toDoubleOrNull(),
-        values = values
+        values = values,
+        tzOffsetMin = c.getOrNull(5 + pids.size)?.toIntOrNull()
     )
 } catch (_: Exception) {
     null // truncated line
@@ -324,6 +341,8 @@ class FileJournalStore(private val root: File) : JournalStore {
                 append("trip_id=").append(tripId).append('\n')
                 append("start_ms=").append(startMs).append('\n')
                 append("pids=").append(pids.joinToString(",")).append('\n')
+                append("tz_id=").append(TripFormats.deviceZoneId()).append('\n')
+                append("tz_offset_min=").append(TripFormats.deviceOffsetMin(startMs)).append('\n')
             }
         )
         return LiveJournal(tripId, startMs, pids) { index ->

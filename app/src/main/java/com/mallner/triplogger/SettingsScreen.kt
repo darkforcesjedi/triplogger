@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -106,23 +107,23 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
     Column(modifier = modifier
         .padding(16.dp)
         .verticalScroll(rememberScrollState())) {
-        Text(text = "Settings", fontWeight = FontWeight.Bold, fontSize = 24.sp)
+        Text(text = stringResource(R.string.settings_title), fontWeight = FontWeight.Bold, fontSize = 24.sp)
         Spacer(modifier = Modifier.height(16.dp))
 
         // ------------------------------------------------------------- Triggers
-        SectionHeader("Log Triggers")
+        SectionHeader(stringResource(R.string.settings_section_triggers))
         LocationField(
-            label = "Bluetooth Device(s)",
-            value = appSettings.bluetoothDeviceName.ifEmpty { "None set - logging never triggers" },
+            label = stringResource(R.string.settings_trigger_label),
+            value = appSettings.bluetoothDeviceName.ifEmpty { stringResource(R.string.settings_trigger_none) },
             isError = appSettings.bluetoothDeviceName.isEmpty(),
             onSelect = { showTriggerDialog = true }
         )
 
         // ------------------------------------------------------------------ GPS
         Spacer(modifier = Modifier.height(16.dp))
-        SectionHeader("GPS")
+        SectionHeader(stringResource(R.string.settings_section_gps))
         ToggleRow(
-            label = "Use GPS to Log Location",
+            label = stringResource(R.string.settings_gps_use),
             checked = appSettings.gpsEnabled,
             onCheckedChange = { on ->
                 coroutineScope.launch {
@@ -139,7 +140,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                 modifier = Modifier.fillMaxWidth(),
                 value = appSettings.loggingFrequency.toString(),
                 onValueChange = { coroutineScope.launch { appSettingsRepository.updateLoggingFrequency(it.toIntOrNull() ?: 10) } },
-                label = { Text("Poll Interval (seconds)") },
+                label = { Text(stringResource(R.string.settings_gps_interval)) },
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
             )
@@ -147,40 +148,40 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
 
         // -------------------------------------------------------------- OBD-II
         Spacer(modifier = Modifier.height(16.dp))
-        SectionHeader("OBD (ELM327 Compatible)")
+        SectionHeader(stringResource(R.string.settings_section_obd))
         ToggleRow(
-            label = "Use OBD Adapter to Log Engine Data",
+            label = stringResource(R.string.settings_obd_use),
             checked = appSettings.obdEnabled,
             onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateObdEnabled(on) } }
         )
         if (appSettings.obdEnabled) {
             LocationField(
-                label = "Adapter",
-                value = appSettings.obdDeviceName.ifEmpty { "Not set - tap Select to scan" },
+                label = stringResource(R.string.settings_obd_adapter),
+                value = appSettings.obdDeviceName.ifEmpty { stringResource(R.string.settings_obd_adapter_none) },
                 isError = appSettings.obdDeviceName.isEmpty(),
-                buttonLabel = "Scan",
+                buttonLabel = stringResource(R.string.action_scan),
                 onSelect = { showAdapterDialog = true }
             )
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
                 value = appSettings.obdPollIntervalMs.toString(),
                 onValueChange = { coroutineScope.launch { appSettingsRepository.updateObdPollIntervalMs(it.toIntOrNull() ?: 1000) } },
-                label = { Text("Poll Interval (milliseconds)") },
+                label = { Text(stringResource(R.string.settings_obd_interval)) },
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
             )
             Spacer(modifier = Modifier.height(4.dp))
             Button(onClick = { showPidDialog = true }) {
-                Text("Sensors (${appSettings.obdSelectedPids.size} selected)")
+                Text(stringResource(R.string.settings_sensors_button, appSettings.obdSelectedPids.size))
             }
         }
 
         // ----------------------------------------------------------- Trip logs
         Spacer(modifier = Modifier.height(16.dp))
-        SectionHeader("Trip Log Settings")
+        SectionHeader(stringResource(R.string.settings_section_logs))
         ToggleRow(
-            label = "Generate Google Maps (KMZ) Logs",
-            caption = if (!appSettings.gpsEnabled) "Requires GPS logging to be enabled" else null,
+            label = stringResource(R.string.settings_kmz_toggle),
+            caption = if (!appSettings.gpsEnabled) stringResource(R.string.settings_kmz_needs_gps) else null,
             enabled = appSettings.gpsEnabled,
             checked = appSettings.generateKmz,
             onCheckedChange = { on ->
@@ -193,7 +194,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             }
         )
         ToggleRow(
-            label = "Generate Spreadsheet (ODS) Logs",
+            label = stringResource(R.string.settings_ods_toggle),
             checked = appSettings.saveOds,
             onCheckedChange = { on ->
                 coroutineScope.launch {
@@ -206,29 +207,29 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
         )
         if (appSettings.generateKmz) {
             LocationField(
-                label = "KMZ Output Location",
-                value = effectiveLocation(appSettings.kmzLocationUri, appSettings.storageLocationUri),
+                label = stringResource(R.string.settings_kmz_location),
+                value = effectiveLocation(context, appSettings.kmzLocationUri, appSettings.storageLocationUri),
                 onSelect = { kmzPicker.launch(null) }
             )
         }
         if (appSettings.saveOds) {
             LocationField(
-                label = "ODS Output Location",
-                value = effectiveLocation(appSettings.odsLocationUri, appSettings.storageLocationUri),
+                label = stringResource(R.string.settings_ods_location),
+                value = effectiveLocation(context, appSettings.odsLocationUri, appSettings.storageLocationUri),
                 onSelect = { odsPicker.launch(null) }
             )
         }
         Spacer(modifier = Modifier.height(4.dp))
         LocationField(
-            label = "Temporary Storage Location",
-            value = appSettings.tempLocationUri.let { if (it.isEmpty()) "Not set" else displayPath(it) },
+            label = stringResource(R.string.settings_temp_location),
+            value = appSettings.tempLocationUri.let { if (it.isEmpty()) stringResource(R.string.not_set) else displayPath(context, it) },
             required = true,
             isError = appSettings.tempLocationUri.isEmpty(),
             onSelect = { tempPicker.launch(null) }
         )
         if (appSettings.tempLocationUri.isEmpty()) {
             Text(
-                text = "Required: logging cannot be enabled until a temporary folder is chosen.",
+                text = stringResource(R.string.settings_temp_required_error),
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 2.dp)
@@ -236,8 +237,8 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
         }
         Spacer(modifier = Modifier.height(16.dp))
         ToggleRow(
-            label = "Split Temp Log Files",
-            caption = "New temp file at max size (still one trip)",
+            label = stringResource(R.string.settings_split_toggle),
+            caption = stringResource(R.string.settings_split_caption),
             checked = appSettings.splitEnabled,
             onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateSplitEnabled(on) } }
         )
@@ -332,7 +333,7 @@ private fun LocationField(
     label: String,
     value: String,
     onSelect: () -> Unit,
-    buttonLabel: String = "Select",
+    buttonLabel: String = stringResource(R.string.action_select),
     required: Boolean = false,
     isError: Boolean = false
 ) {
@@ -354,7 +355,7 @@ private fun LocationField(
                 .padding(start = 16.dp, top = 10.dp, bottom = 10.dp)
         ) {
             Text(
-                text = if (required) "$label (required)" else label,
+                text = if (required) stringResource(R.string.location_field_required, label) else label,
                 fontSize = 12.sp,
                 color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -391,8 +392,8 @@ private fun MaxSegmentSizeField(initialMb: Double, onApply: (Double) -> Unit) {
             val mb = input.trim().toDoubleOrNull()
             if (mb != null && mb > 0) onApply(mb)
         },
-        label = { Text("Max File Size (MB)") },
-        supportingText = { Text("Maximum size of each temp file") },
+        label = { Text(stringResource(R.string.settings_max_size)) },
+        supportingText = { Text(stringResource(R.string.settings_max_size_support)) },
         singleLine = true,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
     )
@@ -409,19 +410,19 @@ private fun TriggerDeviceDialog(
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Trigger Device(s)") },
+        title = { Text(stringResource(R.string.trigger_dialog_title)) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("Name or names separated by |") },
-                    supportingText = { Text("e.g. ford|car box|chev - starts logging when a matching Bluetooth device connects") },
+                    label = { Text(stringResource(R.string.trigger_dialog_field)) },
+                    supportingText = { Text(stringResource(R.string.trigger_dialog_hint)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Tap a paired device to add it:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.trigger_dialog_tap_hint), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 pairedDevices.forEach { deviceName ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -433,17 +434,17 @@ private fun TriggerDeviceDialog(
                         Text(deviceName, fontSize = 15.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         if (text.contains(deviceName, ignoreCase = true)) {
-                            Text("added", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                            Text(stringResource(R.string.trigger_dialog_added), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
                 if (pairedDevices.isEmpty()) {
-                    Text("No paired devices found", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.trigger_dialog_no_paired), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(text.trim()) }) { Text("Set") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { TextButton(onClick = { onConfirm(text.trim()) }) { Text(stringResource(R.string.action_set)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
     )
 }
 
@@ -483,14 +484,14 @@ private fun AdapterScanDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("OBD Adapter") },
+        title = { Text(stringResource(R.string.adapter_dialog_title)) },
         text = {
             Column(modifier = Modifier.heightIn(max = 420.dp)) {
                 if (scanning.value) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text("Scanning for nearby devices…", fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
+                    Text(stringResource(R.string.adapter_scanning), fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
                 } else {
-                    Text("Nearby devices (tap to select):", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.adapter_nearby), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     obdRanked.forEach { deviceName ->
@@ -504,22 +505,22 @@ private fun AdapterScanDialog(
                             Text(deviceName, fontSize = 15.sp)
                             if (connector.looksLikeObdAdapter(deviceName)) {
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("OBD?", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                Text(stringResource(R.string.adapter_obd_guess), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
                     if (obdRanked.isEmpty() && !scanning.value) {
-                        Text("Nothing found yet. Wake the adapter (ignition on) and scan again.", fontSize = 13.sp)
+                        Text(stringResource(R.string.adapter_nothing_found), fontSize = 13.sp)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = manualName,
                         onValueChange = { manualName = it },
-                        label = { Text("Or type the adapter name") },
+                        label = { Text(stringResource(R.string.adapter_manual_entry)) },
                         singleLine = true,
                         trailingIcon = {
                             TextButton(onClick = { if (manualName.isNotBlank()) onPick(manualName.trim()) }, enabled = manualName.isNotBlank()) {
-                                Text("Use")
+                                Text(stringResource(R.string.action_use))
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -527,7 +528,7 @@ private fun AdapterScanDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } }
     )
 }
 
@@ -541,7 +542,7 @@ private fun SensorPickerDialog(
     val checked = remember { mutableStateOf(selected) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Sensors to log") },
+        title = { Text(stringResource(R.string.sensors_dialog_title)) },
         text = {
             Column(modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                 ObdPids.ALL.forEach { pid ->
@@ -572,18 +573,18 @@ private fun SensorPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(checked.value) }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { TextButton(onClick = { onConfirm(checked.value) }) { Text(stringResource(R.string.action_save)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
     )
 }
 
 // ------------------------------------------------------------------------------------------------
 
-private fun effectiveLocation(specific: String, fallback: String): String =
-    displayPath(specific.ifEmpty { fallback })
+private fun effectiveLocation(context: android.content.Context, specific: String, fallback: String): String =
+    displayPath(context, specific.ifEmpty { fallback })
 
-private fun displayPath(uri: String): String = when {
-    uri.isEmpty() -> "Not set (app storage)"
+private fun displayPath(context: android.content.Context, uri: String): String = when {
+    uri.isEmpty() -> context.getString(R.string.location_not_set_app_storage)
     else -> {
         val decoded = try {
             java.net.URLDecoder.decode(uri.substringAfterLast('/'), "UTF-8")

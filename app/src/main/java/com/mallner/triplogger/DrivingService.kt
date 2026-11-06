@@ -60,6 +60,9 @@ class DrivingService : Service() {
     private var lastObdValues: Map<String, Double?> = emptyMap()
     private val obdConnector by lazy { ObdDeviceConnector(this) }
 
+    /** Single-flight guard: two quick onStartCommand calls must not run recovery twice. */
+    private val recovering = java.util.concurrent.atomic.AtomicBoolean(false)
+
     @Volatile private var lastSettings: AppSettings? = null
 
     private fun settingsSnapshot(): AppSettings = kotlinx.coroutines.runBlocking {
@@ -615,16 +618,21 @@ class DrivingService : Service() {
     }
 
     private fun recoverPendingJournals() {
+        if (!recovering.compareAndSet(false, true)) return // already running
         serviceScope.launch {
-            val store = journalStore() ?: return@launch
-            for (trip in store.unfinishedTrips()) {
-                if (synchronized(journalLock) { currentJournal?.tripId } == trip.name) continue
-                Log.i("DrivingService", "Recovering unfinished trip ${trip.name}")
-                try {
-                    finalizeTrip(store, trip)
-                } catch (e: Exception) {
-                    Log.e("DrivingService", "Recovery failed for ${trip.name}", e)
+            try {
+                val store = journalStore() ?: return@launch
+                for (trip in store.unfinishedTrips()) {
+                    if (synchronized(journalLock) { currentJournal?.tripId } == trip.name) continue
+                    Log.i("DrivingService", "Recovering unfinished trip ${trip.name}")
+                    try {
+                        finalizeTrip(store, trip)
+                    } catch (e: Exception) {
+                        Log.e("DrivingService", "Recovery failed for ${trip.name}", e)
+                    }
                 }
+            } finally {
+                recovering.set(false)
             }
         }
     }

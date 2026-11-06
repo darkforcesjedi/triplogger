@@ -52,7 +52,11 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
 
     private fun writeFile(dir: DocumentFile, name: String, text: String) {
         dir.findFile(name)?.delete()
-        val doc = dir.createFile("text/plain", name) ?: throw IOException("Cannot create $name")
+        dir.findFile("$name.txt")?.delete()
+        // "application/octet-stream" keeps the exact file name; text/plain makes
+        // the external-storage provider append .txt to unknown extensions, which
+        // used to hide orphaned trips from crash recovery.
+        val doc = dir.createFile("application/octet-stream", name) ?: throw IOException("Cannot create $name")
         context.contentResolver.openOutputStream(doc.uri, "w")?.use { it.write(text.toByteArray()) }
             ?: throw IOException("Cannot write $name")
     }
@@ -62,21 +66,29 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
         for (sub in listOfNotNull(root.findFile("pending"), root.findFile("failed"))) {
             if (!sub.isDirectory) continue
             sub.listFiles()
-                .filter { it.isDirectory && it.findFile("trip.properties") != null }
+                .filter { it.isDirectory && hasProps(it) }
                 .sortedBy { it.name }
                 .forEach { trips.add(SafOrphanTrip(context, it)) }
         }
         return trips
     }
 
+    private fun hasProps(dir: DocumentFile): Boolean =
+        dir.findFile("trip.properties") != null || dir.findFile("trip.properties.txt") != null
+
     override fun relocate(trip: OrphanTrip, toSuccess: Boolean) {
         val source = (trip as SafOrphanTrip).dir
+        val files = source.listFiles().filter { it.isFile }
+        if (files.isEmpty()) {
+            source.delete() // nothing to archive; drop the empty source directory
+            return
+        }
         val targetParent = subDir(if (toSuccess) "success" else "failed")
         targetParent.findFile(source.name ?: "trip")?.delete()
         val target = targetParent.createDirectory(source.name ?: "trip")
             ?: throw IOException("Cannot create target directory for relocation")
         try {
-            for (doc in source.listFiles()) {
+            for (doc in files) {
                 if (!doc.isFile) continue
                 val bytes = context.contentResolver.openInputStream(doc.uri)?.use { it.readBytes() } ?: continue
                 val copy = target.createFile(doc.type ?: "text/plain", doc.name ?: continue)
@@ -105,7 +117,8 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
 
 class SafOrphanTrip(private val context: Context, val dir: DocumentFile) : OrphanTrip(dir.name ?: "trip") {
     override fun readText(fileName: String): String? {
-        val doc = dir.findFile(fileName) ?: return null
+        // Older journals saved trip.properties as trip.properties.txt (SAF MIME quirk).
+        val doc = dir.findFile(fileName) ?: dir.findFile("$fileName.txt") ?: return null
         return try {
             context.contentResolver.openInputStream(doc.uri)?.use { it.readBytes() }?.toString(Charsets.UTF_8)
         } catch (e: Exception) {

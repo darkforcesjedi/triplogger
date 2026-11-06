@@ -158,7 +158,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
     val obdValues by DrivingStatus.obdValues.collectAsState()
 
     // Use LaunchedEffect to start the service based on the initial appSettings state
-    LaunchedEffect(key1 = appSettings.serviceEnabled, key2 = permissionsGranted) {
+    LaunchedEffect(key1 = appSettings.serviceEnabled, key2 = permissionsGranted, key3 = appSettings.tempLocationUri) {
         if (appSettings.serviceEnabled && permissionsGranted && appSettings.tempLocationUri.isNotEmpty()) {
             context.startService(Intent(context, DrivingService::class.java))
         }

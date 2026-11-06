@@ -123,8 +123,7 @@
     <string name="awaiting_bluetooth_connection">Awaiting Bluetooth Connection</string>
     <string name="logging_active">Logging Active</string>
     <string name="stop_service">Stop Service</string>
-    <string name="notification_update">Last Fix: %1$s \u0020\u0020|\u0020\u0020 Speed: %2$d MPH</string>
-    <string name="notification_obd_summary">OBD: %1$dmph %2$drpm</string>
+    <string name="notification_obd_summary">OBD: %1$s mph %2$s rpm</string>
     <string name="obd_status_connecting">OBD: connecting…</string>
     <string name="toast_trip_complete">Trip complete. Log files updated.</string>
 

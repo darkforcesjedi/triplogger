@@ -398,13 +398,14 @@ class DrivingService : Service() {
                 Log.e("DrivingService", "Error writing to log journal", e)
             }
 
-            val obdSummary = obdSummaryText()
-            notificationManager.updateStatus(
-                statusText = getString(R.string.logging_active),
-                lastFix = shortTime,
-                speed = speedMPH.toInt().toString(),
-                extra = obdSummary
-            )
+            runCatching {
+                notificationManager.updateStatus(
+                    statusText = getString(R.string.logging_active),
+                    lastFix = shortTime,
+                    speed = speedMPH.toInt().toString(),
+                    extra = obdSummaryText()
+                )
+            }.onFailure { Log.e("DrivingService", "Notification update failed", it) }
         }
     }
 

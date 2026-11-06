@@ -442,6 +442,7 @@ class DrivingService : Service() {
                     }
                     if (device == null) {
                         Log.d("DrivingService", "OBD adapter '${settings.obdDeviceName}' not found; will retry")
+                        DrivingStatus.obdLink.value = ObdLinkState.TIMED_OUT
                         delay(backoffMs)
                         backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
                         continue
@@ -456,6 +457,7 @@ class DrivingService : Service() {
                 } catch (e: Exception) {
                     if (isActive) {
                         Log.w("DrivingService", "OBD connection lost: ${e.message}")
+                        DrivingStatus.obdLink.value = ObdLinkState.TIMED_OUT
                         delay(backoffMs)
                         backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
                     }
@@ -590,6 +592,7 @@ class DrivingService : Service() {
                 Log.i("DrivingService", "Trip ${result.label} converted (ods=${result.wroteOds} kmz=${result.kmzDayLabel})")
                 runCatching { store.relocate(trip, toSuccess = true) }
                     .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to success", it) }
+                toast("Trip complete. Log files updated.")
             }
             is FinalizeResult.Skipped -> {
                 Log.i("DrivingService", "Trip ${trip.name} skipped: ${result.reason}")
@@ -600,6 +603,13 @@ class DrivingService : Service() {
                 runCatching { store.relocate(trip, toSuccess = false) }
                     .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to failed", it) }
             }
+        }
+    }
+
+    /** Toasts run on the main looper; safe to call from any service coroutine. */
+    private fun toast(message: String) {
+        android.os.Handler(Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 

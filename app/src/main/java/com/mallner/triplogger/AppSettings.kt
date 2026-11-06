@@ -22,6 +22,7 @@ data class AppSettings(
     val storageLocationUri: String,
     val serviceEnabled: Boolean,
     // OBD-II (ELM327)
+    val gpsEnabled: Boolean = true,
     val obdEnabled: Boolean = false,
     val obdDeviceName: String = "",
     val obdPollIntervalMs: Int = 1000,
@@ -41,6 +42,7 @@ object AppSettingsKeys {
     val FORCE_LOGGING = booleanPreferencesKey("force_logging")
     val SERVICE_ENABLED = booleanPreferencesKey("logging_service_enabled")
     val STORAGE_LOCATION_URI = stringPreferencesKey("storage_location_uri")
+    val GPS_ENABLED = booleanPreferencesKey("gps_enabled")
     val OBD_ENABLED = booleanPreferencesKey("obd_enabled")
     val OBD_DEVICE_NAME = stringPreferencesKey("obd_device_name")
     val OBD_POLL_INTERVAL_MS = intPreferencesKey("obd_poll_interval_ms")
@@ -91,6 +93,12 @@ class AppSettingsRepository(private val context: Context) {
     suspend fun updateServiceEnabled(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.SERVICE_ENABLED] = enabled
+        }
+    }
+
+    suspend fun updateGpsEnabled(enabled: Boolean) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.GPS_ENABLED] = enabled
         }
     }
 
@@ -155,6 +163,7 @@ class AppSettingsRepository(private val context: Context) {
         val forceLogging = preferences[AppSettingsKeys.FORCE_LOGGING] ?: false
         val serviceEnabled = preferences[AppSettingsKeys.SERVICE_ENABLED] ?: false
         val storageLocationUri = preferences[AppSettingsKeys.STORAGE_LOCATION_URI] ?: ""
+        val gpsEnabled = preferences[AppSettingsKeys.GPS_ENABLED] ?: true
         val obdEnabled = preferences[AppSettingsKeys.OBD_ENABLED] ?: false
         val obdDeviceName = preferences[AppSettingsKeys.OBD_DEVICE_NAME] ?: ""
         val obdPollIntervalMs = preferences[AppSettingsKeys.OBD_POLL_INTERVAL_MS] ?: 1000
@@ -168,7 +177,7 @@ class AppSettingsRepository(private val context: Context) {
         val odsLocationUri = preferences[AppSettingsKeys.ODS_LOCATION_URI] ?: ""
         return AppSettings(
             bluetoothDeviceName, loggingFrequency, maxLogFileSize, forceLogging, storageLocationUri, serviceEnabled,
-            obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
+            gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
             tempLocationUri, kmzLocationUri, odsLocationUri
         )
     }

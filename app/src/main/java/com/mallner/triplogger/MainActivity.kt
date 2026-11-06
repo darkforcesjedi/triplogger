@@ -10,17 +10,30 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -39,6 +52,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -50,6 +68,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.mallner.triplogger.ui.theme.TripLoggerTheme
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -146,15 +167,14 @@ fun TripLoggerApp() {
 fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onRequestPermissions: () -> Unit) {
     val context = LocalContext.current
     val appSettingsRepository = remember { AppSettingsRepository(context) }
-    val appSettings by appSettingsRepository.appSettingsFlow.collectAsState(initial = AppSettings("", 10, 1024 * 1024, false, "", false))
+    val appSettings by appSettingsRepository.appSettingsFlow.collectAsState(initial = AppSettings("", 10, false, 10 * 1024, false, "", serviceEnabled = false))
     val coroutineScope = rememberCoroutineScope()
-    val isConnected by DrivingStatus.isConnected.collectAsState()
     val isLogging by DrivingStatus.isLogging.collectAsState()
-    val currentLogFile by DrivingStatus.currentLogFile.collectAsState()
-    val lastLocation by DrivingStatus.lastLocation.collectAsState()
     val serviceEnabled by DrivingStatus.isEnabled.collectAsState()
-    val obdEnabled = appSettings.obdEnabled
-    val obdConnected by DrivingStatus.isObdConnected.collectAsState()
+    val triggeredBy by DrivingStatus.triggeredBy.collectAsState()
+    val lastLocation by DrivingStatus.lastLocation.collectAsState()
+    val currentLogFile by DrivingStatus.currentLogFile.collectAsState()
+    val obdLink by DrivingStatus.obdLink.collectAsState()
     val obdValues by DrivingStatus.obdValues.collectAsState()
 
     // Use LaunchedEffect to start the service based on the initial appSettings state
@@ -166,115 +186,285 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
 
     val tempLocationMissing = appSettings.tempLocationUri.isEmpty()
 
-    Column(modifier = modifier.padding(16.dp)) {
-        if (permissionsGranted) {
-            Row (modifier = Modifier.fillMaxWidth()){
-                Text(
-                    modifier = Modifier
-                        .align(Alignment.CenterVertically)
-                        .weight(5f),
-                    text = "Service Enabled"
-                )
-                Switch(
-                    checked = appSettings.serviceEnabled && !tempLocationMissing,
-                    enabled = !tempLocationMissing,
-                    onCheckedChange = { enabled ->
-                        coroutineScope.launch {
-                            appSettingsRepository.updateServiceEnabled(enabled)
-                            if (enabled) {
-                                context.startService(Intent(context, DrivingService::class.java))
-                            } else {
-                                context.stopService(Intent(context, DrivingService::class.java))
-                            }
-                        }
-                    }
-                )
-            }
-            if (tempLocationMissing) {
-                Text(
-                    text = "Choose a Temporary Storage Location in Settings to enable logging.",
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp
-                )
-            }
-            Row {
-                Text(
-                    modifier = Modifier
-                        .align(Alignment.CenterVertically)
-                        .weight(1f),
-                    text = "Force Logging"
-                )
-                Switch(
-                    checked = appSettings.forceLogging,
-                    onCheckedChange = { coroutineScope.launch { appSettingsRepository.updateForceLogging(it) } }
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = {
-                context.stopService(Intent(context, DrivingService::class.java))
-                context.startService(Intent(context, DrivingService::class.java))
-            }) {
-                Text("New Log File")
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Status:",
-                fontWeight = FontWeight.Bold,
-                fontSize = 24.sp
-            )
-            if (serviceEnabled) {
-                Text("Bluetooth Connected: $isConnected")
-            } else {
-                Text("Bluetooth Connected: (not watching, service disabled)")
-            }
-
-            Text("Logging: $isLogging")
-            Text("Current Log File:\n${currentLogFile ?: "N/A"}")
-            Text("Last Location: ${lastLocation?.latitude}, ${lastLocation?.longitude}")
-            Text("Speed: ${lastLocation?.speed?.times(2.23694f)} MPH")
-
-            if (obdEnabled) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "OBD-II:",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
-                )
-                if (!serviceEnabled) {
-                    Text("Adapter Connected: (not watching, service disabled)")
-                } else if (obdConnected) {
-                    Text("Adapter Connected: true")
-                } else {
-                    Text("Adapter Connected: false")
-                }
-                if (obdConnected) {
-                    val speedMph = obdValues["0D"]?.let { String.format("%.0f", it * 0.621371) }
-                    val rpm = obdValues["0C"]?.toInt()
-                    val coolant = obdValues["05"]?.toInt()
-                    Text("Speed (OBD): ${speedMph ?: "-"} MPH")
-                    Text("Engine RPM: ${rpm ?: "-"}")
-                    Text("Coolant Temp: ${coolant ?: "-"} °C")
-                    val extras = obdValues
-                        .filterKeys { it !in setOf("0D", "0C", "05") }
-                        .mapNotNull { (hex, value) ->
-                            val pid = ObdPids.byHex(hex) ?: return@mapNotNull null
-                            "${pid.name}: ${String.format("%.1f", value)} ${pid.unit}"
-                        }
-                        .take(6)
-                        .joinToString("\n")
-                    if (extras.isNotEmpty()) {
-                        Text(extras)
-                    }
-                } else if (serviceEnabled) {
-                    Text("Trying to connect - is the car powered on?")
-                }
-            }
-        } else {
+    Column(
+        modifier = modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        if (!permissionsGranted) {
             Text("Permissions not granted. Please grant permissions for the app to function correctly.")
             Button(onClick = onRequestPermissions) {
                 Text("Enable Permissions")
             }
+            return@Column
         }
+
+        // ------------------------------------------------------------- Controls
+        SwitchRow(
+            label = "Service Enabled",
+            caption = if (tempLocationMissing) "Choose a Temporary Storage Location in Settings first" else null,
+            checked = appSettings.serviceEnabled && !tempLocationMissing,
+            enabled = !tempLocationMissing,
+            onCheckedChange = { enabled ->
+                coroutineScope.launch {
+                    appSettingsRepository.updateServiceEnabled(enabled)
+                    if (enabled) {
+                        context.startService(Intent(context, DrivingService::class.java))
+                    } else {
+                        context.stopService(Intent(context, DrivingService::class.java))
+                    }
+                }
+            }
+        )
+        if (tempLocationMissing) {
+            Text(
+                text = "Logging stays off until a temporary folder is chosen.",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 13.sp
+            )
+        }
+        SwitchRow(
+            label = "Force Logging",
+            caption = "Start logging right away without waiting for the trigger device",
+            checked = appSettings.forceLogging,
+            onCheckedChange = { coroutineScope.launch { appSettingsRepository.updateForceLogging(it) } }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ---------------------------------------------------------- Trigger light
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val lightColor = when {
+                !serviceEnabled -> MaterialTheme.colorScheme.outline
+                isLogging && triggeredBy != null -> Color(0xFF43A047) // green: logging
+                else -> Color(0xFFFFB300) // amber: armed, waiting for trigger
+            }
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .background(lightColor, CircleShape)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+                Text(
+                    text = when {
+                        !serviceEnabled -> "Idle - service off"
+                        isLogging && triggeredBy == "manual" -> "Logging - started manually"
+                        isLogging && triggeredBy != null -> "Logging - triggered by \"$triggeredBy\""
+                        isLogging -> "Logging"
+                        else -> "Armed - waiting for a trigger device"
+                    },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    text = currentLogFile?.let { "Recording: $it" } ?: "No trip in progress",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // -------------------------------------------------------------- New Trip
+        Button(
+            enabled = isLogging,
+            onClick = {
+                context.startService(
+                    Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_NEW_TRIP }
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("New Trip")
+        }
+        Text(
+            text = "Ends the current trip now (it is converted to KMZ/ODS as usual) and starts a fresh one.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+
+        // ------------------------------------------------------------- GPS tile
+        if (appSettings.gpsEnabled) {
+            Spacer(modifier = Modifier.height(20.dp))
+            StatusTile(title = "GPS") {
+                val location = lastLocation
+                if (location == null) {
+                    Text("Waiting for first fix…", fontSize = 14.sp)
+                } else {
+                    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(location.time))
+                    StatusLine("Last fix", time)
+                    StatusLine(
+                        "Position",
+                        String.format(Locale.getDefault(), "%.5f, %.5f", location.latitude, location.longitude)
+                    )
+                    StatusLine(
+                        "Speed",
+                        String.format(Locale.getDefault(), "%.1f mph", location.speed * 2.23694f)
+                    )
+                    if (location.hasAccuracy()) {
+                        StatusLine("Accuracy", String.format(Locale.getDefault(), "±%.0f m", location.accuracy))
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------- OBD tile
+        if (appSettings.obdEnabled) {
+            Spacer(modifier = Modifier.height(20.dp))
+            StatusTile(title = "OBD-II") {
+                val linkText = when {
+                    !serviceEnabled -> "Idle - service off"
+                    else -> when (obdLink) {
+                        ObdLinkState.IDLE -> "Idle"
+                        ObdLinkState.WAITING_FOR_DEVICE -> "Waiting for trigger device"
+                        ObdLinkState.CONNECTING -> "Connecting to adapter…"
+                        ObdLinkState.CONNECTED -> "Connected"
+                    }
+                }
+                val connected = serviceEnabled && obdLink == ObdLinkState.CONNECTED
+                val dot = when {
+                    connected -> Color(0xFF43A047)
+                    serviceEnabled -> Color(0xFFFFB300)
+                    else -> MaterialTheme.colorScheme.outline
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(12.dp).background(dot, CircleShape))
+                    Spacer(modifier = Modifier.size(width = 8.dp, height = 0.dp))
+                    Text(linkText, fontSize = 14.sp)
+                }
+                val speedMph = if (connected) obdValues["0D"]?.let { it * TripFormats.KMH_TO_MPH } else null
+                val rpm = if (connected) obdValues["0C"] else null
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Gauge(label = "MPH", value = speedMph, maxValue = 160.0, color = Color(0xFF1464FF))
+                    Gauge(label = "RPM", value = rpm, maxValue = 7000.0, color = Color(0xFFE53935))
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Home composables
+// ------------------------------------------------------------------------------------------------
+
+@Composable
+private fun SwitchRow(
+    label: String,
+    caption: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontSize = 16.sp)
+            if (caption != null) {
+                Text(caption, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(modifier = Modifier.size(8.dp))
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun StatusTile(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun StatusLine(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(90.dp)
+        )
+        Text(value, fontSize = 14.sp)
+    }
+}
+
+/**
+ * Canvas arc gauge (240° sweep, open at the bottom) with the value in the middle.
+ * Shows "--" when there is no reading yet.
+ */
+@Composable
+private fun Gauge(
+    label: String,
+    value: Double?,
+    maxValue: Double,
+    color: Color
+) {
+    val fraction = ((value ?: 0.0) / maxValue).coerceIn(0.0, 1.0).toFloat()
+    val trackColor = MaterialTheme.colorScheme.outlineVariant
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier.size(150.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val stroke = size.minDimension * 0.085f
+                val arcSize = Size(size.width - stroke, size.height - stroke)
+                val topLeft = Offset(stroke / 2f, stroke / 2f)
+                drawArc(
+                    color = trackColor,
+                    startAngle = 150f,
+                    sweepAngle = 240f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                )
+                if (fraction > 0f) {
+                    drawArc(
+                        color = color,
+                        startAngle = 150f,
+                        sweepAngle = 240f * fraction,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round)
+                    )
+                }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = value?.let { String.format(Locale.getDefault(), "%.0f", it) } ?: "--",
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 2.dp)
+        )
     }
 }
 

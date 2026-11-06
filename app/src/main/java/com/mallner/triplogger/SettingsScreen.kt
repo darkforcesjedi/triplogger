@@ -65,7 +65,7 @@ import kotlinx.coroutines.launch
 @SuppressLint("MissingPermission")
 @Composable
 fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSettingsRepository) {
-    val appSettings by appSettingsRepository.appSettingsFlow.collectAsState(initial = AppSettings("", 10, 1024 * 1024, false, "", serviceEnabled = false))
+    val appSettings by appSettingsRepository.appSettingsFlow.collectAsState(initial = AppSettings("", 10, false, 10 * 1024, false, "", serviceEnabled = false))
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -234,6 +234,21 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                 modifier = Modifier.padding(top = 2.dp)
             )
         }
+        Spacer(modifier = Modifier.height(16.dp))
+        ToggleRow(
+            label = "Split Temp Log Files",
+            caption = "Start a new temp file when one reaches the maximum size (still one trip)",
+            checked = appSettings.splitEnabled,
+            onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updateSplitEnabled(on) } }
+        )
+        if (appSettings.splitEnabled) {
+            MaxSegmentSizeField(
+                initialMb = appSettings.maxSegmentSizeKb / 1024.0,
+                onApply = { mb ->
+                    coroutineScope.launch { appSettingsRepository.updateMaxSegmentSizeKb((mb * 1024).toLong()) }
+                }
+            )
+        }
         Spacer(modifier = Modifier.height(24.dp))
     }
 
@@ -359,6 +374,28 @@ private fun LocationField(
             Text(buttonLabel)
         }
     }
+}
+
+/**
+ * Max segment size editor: free-form local text (so decimals can be typed),
+ * applied as soon as it parses to a positive number of megabytes.
+ */
+@Composable
+private fun MaxSegmentSizeField(initialMb: Double, onApply: (Double) -> Unit) {
+    var text by remember { mutableStateOf(if (initialMb % 1.0 == 0.0) initialMb.toLong().toString() else initialMb.toString()) }
+    OutlinedTextField(
+        modifier = Modifier.fillMaxWidth(),
+        value = text,
+        onValueChange = { input ->
+            text = input
+            val mb = input.trim().toDoubleOrNull()
+            if (mb != null && mb > 0) onApply(mb)
+        },
+        label = { Text("Max File Size (MB)") },
+        supportingText = { Text("Each temp file splits after this size - the trip is reassembled when it converts") },
+        singleLine = true,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
+    )
 }
 
 /** Trigger pattern editor: free text plus tap-to-add paired device names. */

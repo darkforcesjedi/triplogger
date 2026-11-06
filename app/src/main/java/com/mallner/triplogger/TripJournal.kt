@@ -30,14 +30,18 @@ data class ObdRow(
  * Crash-safe on-disk buffer for trips, inside a user-selectable directory with
  * the layout:
  *
- *   <root>/pending/<tripId>/trip.properties, gps.csv, obd.csv   (recording)
- *   <root>/success/<tripId>/...                                   (converted)
- *   <root>/failed/<tripId>/...                                    (conversion error)
+ *   <root>/pending/<tripId>/trip.properties, gps-000.csv, obd-000.csv, ...   (recording)
+ *   <root>/success/<tripId>/...                                               (converted)
+ *   <root>/failed/<tripId>/...                                                (conversion error)
  *
- * Journals are appended while driving; when a trip completes it is converted to
- * the final formats (KMZ/ODS) and relocated to success/ or failed/. Whatever is
- * still in pending/ when the service starts is an interrupted trip and gets
- * recovered (finalized) automatically.
+ * Journals are appended while driving. When a segment grows past the configured
+ * max size it is split: recording continues in gps-001.csv/obd-001.csv etc.
+ * Splitting is transparent to the trip - all segments are concatenated again
+ * during conversion and the trip produces one KMZ track / ODS sheet.
+ *
+ * When a trip completes it is converted and relocated to success/ or failed/.
+ * Whatever is still in pending/ when the service starts is an interrupted trip
+ * and gets recovered (finalized) automatically.
  */
 interface JournalStore {
     fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal
@@ -60,17 +64,23 @@ class LiveJournal(
     val tripId: String,
     val startMs: Long,
     val pids: List<String>,
-    gpsStream: OutputStream,
-    obdStream: OutputStream
+    private val openSegment: (Int) -> Pair<OutputStream, OutputStream>
 ) {
-    private val gpsWriter = RowWriter(gpsStream)
-    private val obdWriter = RowWriter(obdStream)
+    private var gpsWriter: RowWriter
+    private var obdWriter: RowWriter
     private var closed = false
 
-    init {
-        gpsWriter.write(GPS_HEADER + "\n")
-        obdWriter.write(obdHeader(pids) + "\n")
-    }
+    /** 0-based index of the segment currently being written. */
+    var segmentCount = 0
+        private set
+
+    /** Total bytes written across all segments of this trip. */
+    var totalBytes: Long = 0
+        private set
+
+    /** Bytes written to the current segment (this is what the split threshold compares against). */
+    var approxBytes: Long = 0
+        private set
 
     companion object {
         const val GPS_HEADER = "ts,gps_time,latitude,longitude,altitude,speed_mps,bearing,accuracy_m"
@@ -79,8 +89,37 @@ class LiveJournal(
             if (pids.isEmpty()) OBD_HEADER_PREFIX else OBD_HEADER_PREFIX + "," + pids.joinToString(",")
     }
 
-    var approxBytes: Long = 0
-        private set
+    init {
+        val streams = openSegment(0)
+        gpsWriter = RowWriter(streams.first)
+        obdWriter = RowWriter(streams.second)
+        writeHeaders()
+    }
+
+    /**
+     * Close the current segment files and continue recording into the next
+     * ones. This is *not* a new trip: the trip id, start time and conversion
+     * output are unchanged.
+     */
+    fun split() {
+        if (closed) return
+        try {
+            gpsWriter.closeQuietly()
+            obdWriter.closeQuietly()
+        } catch (_: Exception) {
+        }
+        segmentCount++
+        val streams = openSegment(segmentCount)
+        gpsWriter = RowWriter(streams.first)
+        obdWriter = RowWriter(streams.second)
+        writeHeaders()
+        approxBytes = 0
+    }
+
+    private fun writeHeaders() {
+        gpsWriter.write(GPS_HEADER + "\n")
+        obdWriter.write(obdHeader(pids) + "\n")
+    }
 
     fun append(row: GpsRow) {
         if (closed) return
@@ -96,6 +135,7 @@ class LiveJournal(
         ).joinToString(",") + "\n"
         gpsWriter.write(line)
         approxBytes += line.length
+        totalBytes += line.length
     }
 
     fun append(row: ObdRow) {
@@ -110,6 +150,7 @@ class LiveJournal(
         sb.append('\n')
         obdWriter.write(sb.toString())
         approxBytes += sb.length
+        totalBytes += sb.length
     }
 
     fun close() {
@@ -123,6 +164,9 @@ class LiveJournal(
 /** A recorded (but not yet successfully finalized) trip that can be read back. */
 abstract class OrphanTrip(val name: String) {
     abstract fun readText(fileName: String): String?
+
+    /** All file names in the trip directory (used to discover segments). */
+    abstract fun listFileNames(): List<String>
 
     fun readProps(): Map<String, String> {
         val props = HashMap<String, String>()
@@ -138,33 +182,53 @@ abstract class OrphanTrip(val name: String) {
 
     fun startMs(): Long = readProps()["start_ms"]?.toLongOrNull() ?: 0L
 
+    /** Segment file names in write order, including the legacy single-file names. */
+    protected fun segments(prefix: String): List<String> =
+        listFileNames()
+            .filter { segmentIndexOf(it, prefix) != null }
+            .sortedBy { segmentIndexOf(it, prefix) }
+
+    /** Index of a segment file ("gps.csv" -> 0, "gps-002.csv" -> 2), null when unrelated. */
+    private fun segmentIndexOf(fileName: String, prefix: String): Int? {
+        if (!fileName.endsWith(".csv")) return null
+        val stem = fileName.removeSuffix(".csv")
+        if (stem == prefix) return 0 // legacy single-file journal
+        if (!stem.startsWith("$prefix-")) return null
+        return stem.removePrefix("$prefix-").toIntOrNull()
+    }
+
     fun readGpsRows(): List<GpsRow> {
-        val text = readText("gps.csv") ?: return emptyList()
         val rows = ArrayList<GpsRow>()
-        var first = true
-        for (line in text.lineSequence()) {
-            if (first) { first = false; continue }
-            parseGpsLine(line)?.let { rows.add(it) }
+        for (segment in segments("gps")) {
+            val text = readText(segment) ?: continue
+            var first = true
+            for (line in text.lineSequence()) {
+                if (first) { first = false; continue }
+                parseGpsLine(line)?.let { rows.add(it) }
+            }
         }
         return rows
     }
 
     fun readObdRows(pids: List<String>): List<ObdRow> {
-        val text = readText("obd.csv") ?: return emptyList()
         val rows = ArrayList<ObdRow>()
-        var first = true
-        for (line in text.lineSequence()) {
-            if (first) { first = false; continue }
-            parseObdLine(line, pids)?.let { rows.add(it) }
+        for (segment in segments("obd")) {
+            val text = readText(segment) ?: continue
+            var first = true
+            for (line in text.lineSequence()) {
+                if (first) { first = false; continue }
+                parseObdLine(line, pids)?.let { rows.add(it) }
+            }
         }
         return rows
     }
 
     fun isEmpty(): Boolean {
-        val gps = readText("gps.csv") ?: return true
-        val obd = readText("obd.csv") ?: ""
-        return gps.length <= LiveJournal.GPS_HEADER.length + 2 &&
-            obd.length <= LiveJournal.obdHeader(pids()).length + 2
+        val headerAllowance = LiveJournal.GPS_HEADER.length + LiveJournal.obdHeader(pids()).length + 8
+        var dataBytes = 0
+        segments("gps").mapNotNull { readText(it) }.forEach { dataBytes += it.length }
+        segments("obd").mapNotNull { readText(it) }.forEach { dataBytes += it.length }
+        return dataBytes <= headerAllowance
     }
 }
 
@@ -217,11 +281,12 @@ class FileJournalStore(private val root: File) : JournalStore {
                 append("pids=").append(pids.joinToString(",")).append('\n')
             }
         )
-        return LiveJournal(
-            tripId, startMs, pids,
-            BufferedOutputStream(FileOutputStream(File(dir, "gps.csv"), false), 4096),
-            BufferedOutputStream(FileOutputStream(File(dir, "obd.csv"), false), 4096)
-        )
+        return LiveJournal(tripId, startMs, pids) { index ->
+            Pair(
+                BufferedOutputStream(FileOutputStream(File(dir, segmentName("gps", index)), false), 4096),
+                BufferedOutputStream(FileOutputStream(File(dir, segmentName("obd", index)), false), 4096)
+            )
+        }
     }
 
     override fun unfinishedTrips(): List<OrphanTrip> {
@@ -253,7 +318,11 @@ class FileJournalStore(private val root: File) : JournalStore {
 class FileOrphanTrip(val dir: File) : OrphanTrip(dir.name) {
     override fun readText(fileName: String): String? =
         File(dir, fileName).takeIf { it.isFile }?.readText()
+
+    override fun listFileNames(): List<String> = dir.list()?.toList() ?: emptyList()
 }
+
+internal fun segmentName(prefix: String, index: Int): String = "$prefix-%03d.csv".format(index)
 
 /** Buffered row writer that flushes every line so little is lost on a crash. */
 private class RowWriter(private val stream: OutputStream) {

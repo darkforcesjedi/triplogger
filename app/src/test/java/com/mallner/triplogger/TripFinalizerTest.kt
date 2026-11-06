@@ -119,11 +119,11 @@ class TripFinalizerTest {
     private class CaptureRenderer : PlotRenderer {
         var speedUnit: String = ""
         var tzOffsetMin: Int? = null
-        var tzChanges: List<Pair<Long, String>> = emptyList()
+        var tzChanges: List<Pair<Long, Int>> = emptyList()
         var dateChanges: List<Pair<Long, String>> = emptyList()
         var obdSpeeds: List<Pair<Long, Float>> = emptyList()
         var gpsSpeeds: List<Pair<Long, Float>> = emptyList()
-        override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
+        override fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, Int>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray {
             this.speedUnit = speedUnit
             this.tzOffsetMin = tzOffsetMin
             this.tzChanges = tzChanges
@@ -220,7 +220,7 @@ class TripFinalizerTest {
         )
         assertTrue(result is FinalizeResult.Completed)
         assertEquals(-300, renderer.tzOffsetMin!!)              // axis uses the start-of-trip zone
-        assertEquals(Pair(day1Noon + 5000L, "-04:00"), renderer.tzChanges.single())
+        assertEquals(Pair(day1Noon + 5000L, -240), renderer.tzChanges.single())
         assertEquals(emptyList<Pair<Long, String>>(), renderer.dateChanges) // noon -> noon, no day flip
     }
 

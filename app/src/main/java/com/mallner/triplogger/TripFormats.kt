@@ -51,6 +51,9 @@ object TripFormats {
         return "%c%02d:%02d".format(sign, abs / 60, abs % 60)
     }
 
+    /** UTC-referenced offset label per ISO 8601 usage, e.g. "UTC-05:00" / "UTC+05:30". */
+    fun utcLabel(minutes: Int): String = "UTC" + offsetLabel(minutes)
+
     /** Time zone for "HH:mm" plot axis labels in a recorded offset. */
     fun offsetTimeZone(tzOffsetMin: Int?): TimeZone =
         if (tzOffsetMin == null) TimeZone.getDefault()

@@ -108,15 +108,15 @@ object TripFinalizer {
     }
 
     /** Time zone / DST changes across the trip as (time, new "+hh:mm") for the plot. */
-    internal fun tzChanges(gpsRows: List<GpsRow>, obdRows: List<ObdRow>, startTz: Int?): List<Pair<Long, String>> {
+    internal fun tzChanges(gpsRows: List<GpsRow>, obdRows: List<ObdRow>, startTz: Int?): List<Pair<Long, Int>> {
         val samples = (gpsRows.map { Pair(it.gpsTime, it.tzOffsetMin) } + obdRows.map { Pair(it.ts, it.tzOffsetMin) })
             .filter { it.first > 0L }
             .sortedBy { it.first }
-        val changes = ArrayList<Pair<Long, String>>()
+        val changes = ArrayList<Pair<Long, Int>>()
         var previous = startTz
         for ((time, offset) in samples) {
             if (offset == null) continue
-            if (previous != null && offset != previous) changes.add(Pair(time, TripFormats.offsetLabel(offset)))
+            if (previous != null && offset != previous) changes.add(Pair(time, offset))
             previous = offset
         }
         return changes

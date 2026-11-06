@@ -2,6 +2,9 @@ package com.mallner.triplogger
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -10,13 +13,14 @@ import java.util.zip.ZipOutputStream
 interface PlotRenderer {
     /**
      * @param speedUnit    label unit for the y axis ("mph" or "km/h")
-     * @param tzOffsetMin  minutes east of UTC for the "HH:mm" axis labels
-     * @param tzChanges    time + new "+hh:mm" offset at each time zone/DST change to
-     *                     mark with a dashed vertical gridline (may be empty)
-     * @param dateChanges  time + new "MM-dd" at each local calendar-day change to
-     *                     mark with a dotted vertical gridline (may be empty)
+     * @param tzOffsetMin  minutes east of UTC the trip started in; axis labels show
+     *                     the wall-clock time actually in effect at each instant
+     * @param tzChanges    time + new offset (minutes east of UTC) at each time zone /
+     *                     DST change, marked with a dashed gridline (may be empty)
+     * @param dateChanges  time + new "MM-dd" at each local calendar-day change,
+     *                     marked with a dotted gridline (may be empty)
      */
-    fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, String>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
+    fun renderPng(label: String, speedUnit: String, tzOffsetMin: Int?, tzChanges: List<Pair<Long, Int>>, dateChanges: List<Pair<Long, String>>, obdSpeeds: List<Pair<Long, Float>>, gpsSpeeds: List<Pair<Long, Float>>): ByteArray
 }
 
 data class TrackPoint(val gpsTimeMs: Long, val lon: Double, val lat: Double, val alt: Double, val tzOffsetMin: Int? = null)
@@ -29,8 +33,8 @@ data class TripTrack(
     val points: List<TrackPoint>,
     val obdSpeeds: List<Pair<Long, Float>>,
     val gpsSpeeds: List<Pair<Long, Float>>,
-    /** Offset changes during the trip (time, new "+hh:mm" label) for the plot. */
-    val tzChanges: List<Pair<Long, String>> = emptyList(),
+    /** Offset changes during the trip (time, new minutes east of UTC) for the plot. */
+    val tzChanges: List<Pair<Long, Int>> = emptyList(),
     /** Local calendar-day changes during the trip (time, new "MM-dd") for the plot. */
     val dateChanges: List<Pair<Long, String>> = emptyList(),
     /** Minutes east of UTC the trip started in (plot axis labels). */
@@ -42,12 +46,11 @@ data class TripTrack(
  * Python TorqueLogs converter produces: one "<date>.kml" document with one
  * gx:Track placemark per trip plus one "<label>.png" speed plot per trip.
  *
- * Daily files accumulate trips. Re-processing a trip (crash recovery, rebuild
+ * Placemarks are kept in chronological order (by the UTC instant of their
+ * first <when>, offset-aware). Re-processing a trip (crash recovery, rebuild
  * from archive) *replaces* the placemark with the same gx:Track id instead of
  * appending a duplicate, and its "<label>.png" entry is overwritten, so the
- * regenerated trip wins while every other trip in the day is untouched. Color
- * assignment continues the converter's ColorList cycle based on how many
- * placemarks already exist.
+ * regenerated trip wins while every other trip in the day is untouched.
  */
 class DailyKmz(
     val colorList: List<String> = DEFAULT_COLORS,
@@ -61,11 +64,19 @@ class DailyKmz(
             "<Document>\n"
         private const val KML_FOOTER = "</Document>\n</kml>"
 
+        /**
+         * Name and image caption carry the UTC offset the trip started in
+         * ("2026-11-05 21.43.50 UTC-05:00"); the id and the PNG file name stay
+         * exactly as before so existing tracks keep matching on rebuild.
+         */
         fun placemarkXml(label: String, trackId: String, color: String, points: List<TrackPoint>): String {
+            val offsetMin = points.firstNotNullOfOrNull { it.tzOffsetMin }
+            val name = label + (offsetMin?.let { " " + TripFormats.utcLabel(it) } ?: "")
+            val caption = points.firstOrNull()?.let { TripFormats.kmlWhen(it.gpsTimeMs, it.tzOffsetMin) + "<br/>" } ?: ""
             val sb = StringBuilder()
             sb.append("  <Placemark>\n")
-            sb.append("    <name>" + label + "</name>\n")
-            sb.append("    <description><![CDATA[<img src=\"" + label + ".png\">]]></description>\n")
+            sb.append("    <name>" + name + "</name>\n")
+            sb.append("    <description><![CDATA[" + caption + "<img src=\"" + label + ".png\">]]></description>\n")
             sb.append("    <Style>\n")
             sb.append("      <IconStyle><Icon/></IconStyle>\n")
             sb.append("      <LabelStyle><scale>0</scale></LabelStyle>\n")
@@ -88,6 +99,21 @@ class DailyKmz(
         /** Shortest round-trip decimal string (KML does not like fixed padding). */
         fun dtostr(value: Double): String = if (value.isNaN() || value.isInfinite()) "0" else value.toString()
 
+        private val WHEN_MS = Regex("<when>(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})([-+]\\d{2}:\\d{2})?</when>")
+
+        /** UTC instant of a block's first <when>; naive stamps read as device-local. */
+        internal fun firstWhenMs(placemarkBlock: String): Long? {
+            val m = WHEN_MS.find(placemarkBlock) ?: return null
+            return try {
+                val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+                fmt.timeZone = m.groupValues[2].takeIf { it.isNotEmpty() }
+                    ?.let { TimeZone.getTimeZone("GMT$it") } ?: TimeZone.getDefault()
+                fmt.parse(m.groupValues[1]).time
+            } catch (_: Exception) {
+                null
+            }
+        }
+
         /** Returns the coordinates + track ids in a KMZ (for verification / tests). */
         fun inspect(kmzBytes: ByteArray): Pair<String?, Set<String>> {
             var kml: String? = null
@@ -103,23 +129,6 @@ class DailyKmz(
             val ids = Regex("gx:Track id=\"([^\"]+)\"").findAll(kml ?: "").map { it.groupValues[1] }.toSet()
             return kml to ids
         }
-    }
-
-    /**
-     * Character range of the `<Placemark>` holding `gx:Track id="<trackId>"`,
-     * including its trailing newline; null when the trip is not in the document.
-     * Placemarks without an id (e.g. written by the old Python converter) can
-     * never match, so they are only ever appended after, never replaced.
-     */
-    private fun findPlacemarkRange(kml: String, trackId: String): Pair<Int, Int>? {
-        val marker = kml.indexOf("gx:Track id=\"$trackId\"")
-        if (marker < 0) return null
-        val start = kml.lastIndexOf("<Placemark", marker)
-        val close = kml.indexOf("</Placemark>", marker)
-        if (start < 0 || close < 0) return null
-        var end = close + "</Placemark>".length
-        if (kml.getOrNull(end) == '\n') end++
-        return Pair(start, end)
     }
 
     /**
@@ -145,41 +154,46 @@ class DailyKmz(
             }
         }
 
-        var kml = existingKml
-        var placemarkCount = existingKml?.let { Regex("<Placemark>").findAll(it).count() } ?: 0
+        // Split the document into head + placemark blocks + tail; blocks are keyed
+        // by gx:Track id when present so a re-processed trip replaces itself.
+        var head = KML_HEADER
+        var tail = KML_FOOTER
+        val blocks = LinkedHashMap<String, String>()
+        existingKml?.let { kml ->
+            val first = kml.indexOf("<Placemark")
+            val last = kml.lastIndexOf("</Placemark>")
+            if (first >= 0 && last >= 0) {
+                head = kml.substring(0, first)
+                tail = kml.substring(last + "</Placemark>".length)
+                var pos = first
+                var unkeyed = 0
+                while (true) {
+                    val s = kml.indexOf("<Placemark", pos)
+                    if (s < 0) break
+                    val e = kml.indexOf("</Placemark>", s)
+                    if (e < 0) break
+                    val block = kml.substring(s, e + "</Placemark>".length) + "\n"
+                    val id = Regex("gx:Track id=\"([^\"]+)\"").find(block)?.groupValues?.get(1) ?: "#unkeyed-${unkeyed++}"
+                    blocks[id] = block
+                    pos = e + "</Placemark>".length
+                }
+            }
+        }
 
         for (trip in trips) {
             if (trip.points.isEmpty() && trip.obdSpeeds.isEmpty() && trip.gpsSpeeds.isEmpty()) continue
-            val png = renderer.renderPng(
+            val color = blocks[trip.trackId]?.let { Regex("<color>([0-9A-Fa-f]+)</color>").find(it)?.groupValues?.get(1) }
+                ?: colorList[blocks.size % colorList.size]
+            blocks[trip.trackId] = placemarkXml(trip.label, trip.trackId, color, trip.points)
+            existingEntries["${trip.label}.png"] = renderer.renderPng(
                 trip.label, trip.speedUnit, trip.tzOffsetMin,
                 trip.tzChanges, trip.dateChanges, trip.obdSpeeds, trip.gpsSpeeds
             )
-            val existing = kml?.let { findPlacemarkRange(it, trip.trackId) }
-            if (kml != null && existing != null) {
-                // Re-processing the same trip (recovery / rebuild): replace its
-                // placemark, keeping the color it was first drawn with.
-                val block = kml.substring(existing.first, existing.second)
-                val color = Regex("<color>([0-9A-Fa-f]+)</color>").find(block)?.groupValues?.get(1)
-                    ?: colorList[placemarkCount % colorList.size]
-                kml = kml.substring(0, existing.first) +
-                    placemarkXml(trip.label, trip.trackId, color, trip.points) +
-                    kml.substring(existing.second)
-            } else {
-                val color = colorList[placemarkCount % colorList.size]
-                val placemark = placemarkXml(trip.label, trip.trackId, color, trip.points)
-                kml = if (kml == null) {
-                    KML_HEADER + placemark + KML_FOOTER
-                } else {
-                    val idx = kml.lastIndexOf("</Document>")
-                    if (idx < 0) KML_HEADER + placemark + KML_FOOTER
-                    else kml.substring(0, idx) + placemark + KML_FOOTER
-                }
-                placemarkCount++
-            }
-            existingEntries["${trip.label}.png"] = png
         }
 
-        val finalKml = kml ?: (KML_HEADER + KML_FOOTER)
+        // chronological order by the actual (offset-aware) UTC instants
+        val ordered = blocks.entries.sortedBy { firstWhenMs(it.value) ?: Long.MAX_VALUE }
+        val finalKml = head + ordered.joinToString(separator = "") { it.value } + tail
 
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->

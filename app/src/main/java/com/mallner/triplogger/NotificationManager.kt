@@ -64,9 +64,11 @@ class AppNotificationManager(private val context: Context) {
          * they keep rendering the rich contentText lines they handled perfectly;
          * the unlocked status-bar chip gets this minified form).
          *
-         * Per-sensor glyphs + entry count while anything is still connecting
-         * ("G\u2713O\u00B712"), switching to plain ticks once every enabled sensor is
-         * connected ("\u2713\u271312"). Disabled sensors drop out. Kept at the ~7 char
+         * While any enabled sensor is still connecting: per-sensor glyphs
+         * ("G\u2713O\u00B7"). Once every enabled sensor is connected: the recording
+         * timer ("3:41"), falling back to the glyphs if a sensor drops out.
+         * Disabled sensors are omitted; entry counts never appear here (they
+         * belong on the expanded card). All forms stay within the ~7 char
          * compact-representation limit.
          */
         internal fun chipText(
@@ -74,19 +76,24 @@ class AppNotificationManager(private val context: Context) {
             hasFix: Boolean,
             obdEnabled: Boolean,
             obdConnected: Boolean,
-            entries: Int
+            durationMs: Long
         ): String {
             val allConnected = (!gpsEnabled || hasFix) && (!obdEnabled || obdConnected)
+            if (allConnected) return formatChipDuration(durationMs)
             return buildString {
-                if (allConnected) {
-                    if (gpsEnabled) append(GLYPH_CONNECTED)
-                    if (obdEnabled) append(GLYPH_CONNECTED)
-                } else {
-                    if (gpsEnabled) append('G').append(if (hasFix) GLYPH_CONNECTED else GLYPH_PENDING)
-                    if (obdEnabled) append('O').append(if (obdConnected) GLYPH_CONNECTED else GLYPH_PENDING)
-                }
-                append(entries)
+                if (gpsEnabled) append('G').append(if (hasFix) GLYPH_CONNECTED else GLYPH_PENDING)
+                if (obdEnabled) append('O').append(if (obdConnected) GLYPH_CONNECTED else GLYPH_PENDING)
             }
+        }
+
+        /** mm:ss under an hour, h:mm:ss beyond (the chip hides text past ~7 chars). */
+        internal fun formatChipDuration(durationMs: Long): String {
+            val totalSec = TimeUnit.MILLISECONDS.toSeconds(durationMs.coerceAtLeast(0))
+            val hours = TimeUnit.SECONDS.toHours(totalSec)
+            val minutes = TimeUnit.SECONDS.toMinutes(totalSec) % 60
+            val seconds = totalSec % 60
+            return if (hours == 0L) "%d:%02d".format(minutes, seconds)
+            else "%d:%02d:%02d".format(hours, minutes, seconds)
         }
     }
 
@@ -196,7 +203,7 @@ class AppNotificationManager(private val context: Context) {
                 } else {
                     bundleOf(
                         EXTRA_REQUEST_PROMOTED_ONGOING to true, // Live Update while recording
-                        EXTRA_SHORT_CRITICAL_TEXT to chipText(gpsEnabled, hasFix, obdEnabled, obdConnected, entries)
+                        EXTRA_SHORT_CRITICAL_TEXT to chipText(gpsEnabled, hasFix, obdEnabled, obdConnected, durationMs)
                     )
                 }
             )

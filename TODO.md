@@ -29,14 +29,11 @@ diagnostics possible without `adb logcat`:
   events) with a simple list UI; newest first, with a "share diagnostics"
   action that attaches the recent entries for bug reports.
 
-## Discard trips with fewer than X entries
+## Discard trips with fewer than X entries — DONE
 
-Setting (default off, e.g. "Discard trips shorter than N entries"):
-
-- Applied at trip finalization: journals below the threshold skip
-  post-processing and are deleted instead of archived — matches the
-  "empty journal" skip that already exists (see `trip.isEmpty()`), which can
-  grow a configurable threshold.
-- Needs care: keep the *user-visible* decision obvious (toast "trip too short,
-  discarded"), and prefer `failed/` over hard delete if we ever want an undo
-  path. Interacts with the Trips tab (pending/failed visibility) above.
+Implemented as "Discard Trips With Fewer Than (entries)" (settings
+`discardBelowEntries`): applied at trip finalization (including crash
+recovery), journals below the threshold skip post-processing, are deleted
+instead of archived, and surface a toast. Set it high (e.g. 100000) to keep
+test runs out of the logs. An `undo path via failed/` and per-trip visibility
+remain ideas for the Trips tab above.

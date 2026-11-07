@@ -213,6 +213,22 @@ class TripJournalTest {
     }
 
     @Test
+    fun entryCountCountsDataRowsAcrossBothLogs() {
+        val store = FileJournalStore(tmp.newFolder("journal14"))
+        val journal = store.createTrip("20260119_060000", 1768798800000L, listOf("0C"))
+        journal.close()
+        assertEquals(0, store.orphanOf(journal).entryCount()) // headers only
+
+        val j2 = store.createTrip("20260119_070000", 1768798800000L, listOf("0C"))
+        j2.append(GpsRow(1000, 1000, 37.39, -122.08, 40.0, 12.5f, 180f, 5f))
+        j2.append(GpsRow(2000, 2000, 37.39, -122.08, 40.0, 12.5f, 180f, 5f))
+        j2.append(ObdRow(2000, null, null, null, null, mapOf("0C" to 900.0)))
+        j2.close()
+        // max(gps, obd) rows: a tick writes both, either may lag while connecting
+        assertEquals(2, store.orphanOf(j2).entryCount())
+    }
+
+    @Test
     fun archivePolicyRules() {
         val now = 1_700_000_000_000L
         val day = 86_400_000L

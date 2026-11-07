@@ -28,8 +28,10 @@ import java.util.concurrent.TimeUnit
  *
  * Two layouts:
  *  - idle:     "Service Enabled" / "Awaiting Bluetooth Connection" + Stop
- *  - recording: "Logging Active" / "GPS: Connected | OBD: Connecting"
- *               + "00:12:34 | 137 entries" + New trip + Stop
+ *  - recording: "Logging Active" / "GPS: Connected | OBD: Connecting" while
+ *               anything is still connecting, "00:12:34 | 137 entries" once
+ *               all enabled sensors are connected (expanded card shows both)
+ *               + New trip + Stop
  * There is intentionally no progress bar: a trip has no known endpoint, so a
  * ProgressStyle track would be decorative.
  */
@@ -186,12 +188,18 @@ class AppNotificationManager(private val context: Context) {
         ).joinToString(" | ")
         val timerLine = formatDuration(durationMs) + " | " +
             context.resources.getQuantityString(R.plurals.notification_entries, entries, entries)
+        val allConnected = (!gpsEnabled || hasFix) && (!obdEnabled || obdConnected)
 
+        // Headline line (also the lock-screen / Now-bar pill subtitle): sensor
+        // status only while something is still connecting - once every enabled
+        // sensor is connected the trip itself is the story, so the timer and
+        // entry count take over. The expanded card always shows both lines.
+        //
         // Locked surfaces (Now bar pill, AOD) intentionally get NO
-        // short-critical-text: they then render the contentText line above, which
-        // is how they already displayed perfectly. Only the unlocked status-bar
-        // chip needs the minified glyph/entry string. The 1s ticker re-evaluates
-        // the lock state, so no screen-state receivers are needed.
+        // short-critical-text: they then render the contentText line above,
+        // which is how they already displayed perfectly. Only the unlocked
+        // status-bar chip needs the minified glyph string. The 1s ticker
+        // re-evaluates the lock state, so no screen-state receivers are needed.
         val keyguardLocked = runCatching {
             context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         }.getOrDefault(false)
@@ -208,7 +216,7 @@ class AppNotificationManager(private val context: Context) {
                 }
             )
             .setContentTitle(context.getString(R.string.logging_active))
-            .setContentText(statusLine)
+            .setContentText(if (allConnected) timerLine else statusLine)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$statusLine\n$timerLine"))
         applyActions()
         notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build())

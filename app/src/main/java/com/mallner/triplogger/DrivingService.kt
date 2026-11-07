@@ -650,6 +650,23 @@ class DrivingService : Service() {
      */
     private fun finalizeTrip(store: JournalStore, trip: OrphanTrip, relocate: Boolean = true): FinalizeResult {
         val settings = settingsSnapshot()
+
+        // "Discard trips with fewer than N entries": journals below the
+        // threshold skip post-processing and are deleted instead of archived
+        // (also keeps test runs out of the real history when set high).
+        if (settings.discardBelowEntries > 0) {
+            val entries = runCatching { trip.entryCount() }.getOrDefault(Int.MAX_VALUE)
+            if (entries < settings.discardBelowEntries) {
+                Log.i("DrivingService", "Discarding trip ${trip.name}: $entries entries < ${settings.discardBelowEntries}")
+                if (relocate) {
+                    runCatching { store.delete(trip) }
+                        .onFailure { Log.e("DrivingService", "Could not delete discarded trip ${trip.name}", it) }
+                    toast(getString(R.string.toast_trip_discarded, entries, settings.discardBelowEntries))
+                }
+                return FinalizeResult.Skipped("below minimum entry threshold")
+            }
+        }
+
         val kmzStorage = if (settings.generateKmz) outputStorage(settings.kmzLocationUri) else null
         val odsStorage = if (settings.saveOds) outputStorage(settings.odsLocationUri) else null
 

@@ -40,6 +40,9 @@ data class AppSettings(
     val archiveRetentionDays: Int = 0,
     /** Delete archived trip journals shorter than N seconds (0 = keep all) */
     val archiveMinTripSec: Int = 0,
+    /** At finalization, journals with fewer entries skip conversion and are
+     * deleted instead of archived (0 = keep every trip) */
+    val discardBelowEntries: Int = 0,
     /** Home OBD card corner indicators */
     val showHybridCharge: Boolean = false,
     val showFuelLevel: Boolean = false,
@@ -70,6 +73,7 @@ object AppSettingsKeys {
     val US_UNITS = booleanPreferencesKey("us_units")
     val ARCHIVE_RETENTION_DAYS = intPreferencesKey("archive_retention_days")
     val ARCHIVE_MIN_TRIP_SEC = intPreferencesKey("archive_min_trip_sec")
+    val DISCARD_BELOW_ENTRIES = intPreferencesKey("discard_below_entries")
     val SHOW_HYBRID_CHARGE = booleanPreferencesKey("show_hybrid_charge")
     val SHOW_FUEL_LEVEL = booleanPreferencesKey("show_fuel_level")
     val SPEED_GAUGE_MAX_US = intPreferencesKey("speed_gauge_max_us")
@@ -203,6 +207,12 @@ class AppSettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun updateDiscardBelowEntries(entries: Int) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.DISCARD_BELOW_ENTRIES] = entries.coerceIn(0, 1_000_000)
+        }
+    }
+
     suspend fun updateShowHybridCharge(enabled: Boolean) {
         context.dataStore.edit { it[AppSettingsKeys.SHOW_HYBRID_CHARGE] = enabled }
     }
@@ -252,6 +262,7 @@ class AppSettingsRepository(private val context: Context) {
         val usUnits = preferences[AppSettingsKeys.US_UNITS] ?: true
         val archiveRetentionDays = preferences[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] ?: 0
         val archiveMinTripSec = preferences[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] ?: 0
+        val discardBelowEntries = preferences[AppSettingsKeys.DISCARD_BELOW_ENTRIES] ?: 0
         val showHybridCharge = preferences[AppSettingsKeys.SHOW_HYBRID_CHARGE] ?: false
         val showFuelLevel = preferences[AppSettingsKeys.SHOW_FUEL_LEVEL] ?: false
         val speedGaugeMaxUs = preferences[AppSettingsKeys.SPEED_GAUGE_MAX_US] ?: 160
@@ -261,6 +272,7 @@ class AppSettingsRepository(private val context: Context) {
             bluetoothDeviceName, loggingFrequency, splitEnabled, maxSegmentSizeKb, forceLogging, storageLocationUri, serviceEnabled,
             gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
             tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, archiveRetentionDays, archiveMinTripSec,
+            discardBelowEntries,
             showHybridCharge, showFuelLevel, speedGaugeMaxUs, speedGaugeMaxMetric, rpmGaugeMax
         )
     }

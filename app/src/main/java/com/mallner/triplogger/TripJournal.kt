@@ -290,6 +290,20 @@ abstract class OrphanTrip(val name: String) {
         segments("obd").mapNotNull { readText(it) }.forEach { dataBytes += it.length }
         return dataBytes <= headerAllowance
     }
+
+    /**
+     * Number of journal data lines (headers excluded), taking the larger of
+     * GPS/OBD: one logging tick appends to both files, and during the
+     * connecting phase either one can legitimately lag. Feeds the
+     * "discard trips with fewer than N entries" setting.
+     */
+    fun entryCount(): Int {
+        fun rows(prefix: String): Int =
+            segments(prefix).mapNotNull { readText(it) }.sumOf { text ->
+                (text.lineSequence().count { it.isNotBlank() } - 1).coerceAtLeast(0) // -1 header
+            }
+        return maxOf(rows("gps"), rows("obd"))
+    }
 }
 
 internal fun parseGpsLine(line: String): GpsRow? = try {

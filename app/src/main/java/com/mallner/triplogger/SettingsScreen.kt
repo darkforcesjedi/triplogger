@@ -308,6 +308,12 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             supporting = stringResource(R.string.settings_min_trip_length_support),
             onApply = { coroutineScope.launch { appSettingsRepository.updateArchiveMinTripSec(it) } }
         )
+        NumberField(
+            value = appSettings.discardBelowEntries,
+            label = stringResource(R.string.settings_min_trip_entries),
+            supporting = stringResource(R.string.settings_min_trip_entries_support),
+            onApply = { coroutineScope.launch { appSettingsRepository.updateDiscardBelowEntries(it) } }
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Button(
             enabled = appSettings.tempLocationUri.isNotEmpty() &&

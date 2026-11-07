@@ -55,9 +55,9 @@ Released under the GNU Affero General Public License v3.0 only
 A prebuilt, self-signed release APK is published on the
 [`releases`](https://github.com/darkforcesjedi/triplogger/tree/releases)
 branch of this repository
-(e.g. `DrivingTripLogger-v1.0.apk`, with `SHA256SUMS.txt`).
+(e.g. `DrivingTripLogger-v1.1.apk`, with `SHA256SUMS.txt`).
 Direct download for signed-in users:
-`https://github.com/darkforcesjedi/triplogger/raw/releases/DrivingTripLogger-v1.0.apk`
+`https://github.com/darkforcesjedi/triplogger/raw/releases/DrivingTripLogger-v1.1.apk`
 Installing this APK side by side with a debug build is not possible —
 uninstall the debug build first (different signing keys). Building it
 yourself with your own key is always supported; see

@@ -36,7 +36,7 @@
     <string name="home_light_logging">Logging</string>
     <string name="home_light_manual">Logging - started manually</string>
     <string name="home_light_triggered">Logging - triggered by \"%1$s\"</string>
-    <string name="home_recording">Recording: %1$s</string>
+    <string name="home_recording">Recording Started: %1$s</string>
     <string name="home_no_trip">No trip in progress</string>
     <string name="home_new_trip">Start a new trip log</string>
 
@@ -147,6 +147,12 @@
     <string name="stop_service">Stop Service</string>
     <string name="notification_obd_summary">OBD: %1$s %2$s rpm</string>
     <string name="obd_status_connecting">OBD: connecting…</string>
+    <string name="notification_connected">Connected</string>
+    <string name="notification_new_trip">New trip</string>
+    <plurals name="notification_entries">
+        <item quantity="one">%1$d entry</item>
+        <item quantity="other">%1$d entries</item>
+    </plurals>
     <string name="toast_trip_complete">Trip complete. Log files updated.</string>
     <string name="toast_rebuild_done">Archive rebuilt: %1$d trip(s) re-converted.</string>
     <string name="toast_rebuild_no_temp">Set a Temporary Storage Location first (the archive lives there).</string>

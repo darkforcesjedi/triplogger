@@ -25,7 +25,7 @@ object DrivingStatus {
     val isEnabled = MutableStateFlow(false)
     val isConnected = MutableStateFlow(false)
     val isLogging = MutableStateFlow(false)
-    val currentLogFile = MutableStateFlow<String?>(null)
+    val startedAtMs = MutableStateFlow<Long?>(null)
     val lastLocation = MutableStateFlow<Location?>(null)
     val isObdConnected = MutableStateFlow(false)
     val obdValues = MutableStateFlow<Map<String, Double?>>(emptyMap())

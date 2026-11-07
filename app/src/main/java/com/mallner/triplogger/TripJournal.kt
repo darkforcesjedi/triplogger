@@ -98,6 +98,10 @@ class LiveJournal(
     var totalBytes: Long = 0
         private set
 
+    /** Rows (GPS and OBD) appended so far; shown on the recording notification. */
+    @Volatile var entriesWritten: Int = 0
+        private set
+
     /** Bytes written to the current segment (this is what the split threshold compares against). */
     var approxBytes: Long = 0
         private set
@@ -160,6 +164,7 @@ class LiveJournal(
         gpsWriter.write(line)
         approxBytes += line.length
         totalBytes += line.length
+        entriesWritten++
     }
 
     fun append(row: ObdRow) {
@@ -176,6 +181,7 @@ class LiveJournal(
         obdWriter.write(sb.toString())
         approxBytes += sb.length
         totalBytes += sb.length
+        entriesWritten++
     }
 
     fun close() {

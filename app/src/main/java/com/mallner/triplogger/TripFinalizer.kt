@@ -161,7 +161,9 @@ object TripFinalizer {
         val obdSpeeds = obdRows
             .mapNotNull { row -> row.values["0D"]?.let { Pair(row.ts, UnitFormat.convert("km/h", it, us).first.toFloat()) } }
 
-        if (points.isEmpty() && gpsSpeeds.isEmpty() && obdSpeeds.isEmpty()) return null
+        // A KMZ track needs positions: trips recorded without GPS (or with no fix)
+        // must not create an empty placemark with an OBD-only plot attached.
+        if (points.isEmpty()) return null
         return TripTrack(
             trackId = trackId,
             label = label,

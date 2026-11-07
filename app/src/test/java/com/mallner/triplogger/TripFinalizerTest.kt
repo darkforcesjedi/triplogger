@@ -250,4 +250,31 @@ class TripFinalizerTest {
         }
         assertTrue("ods time lacks the recorded offset: $content", content.contains("-05:00</text:p>"))
     }
+
+    @Test
+    fun gpslessTripExportsOdsButNoKmz() {
+        // Rebuild can encounter archived OBD-only trips (GPS logging off when
+        // recorded). They must not create an empty KMZ track with a plot.
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val kmzDir = tmp.newFolder("kmz")
+        val odsDir = tmp.newFolder("ods")
+        val journal = store.createTrip("20260119_120000", day1Noon, listOf("0C", "0D"))
+        repeat(15) { i ->
+            journal.append(
+                ObdRow(
+                    day1Noon + i * 1000, null, Double.NaN, Double.NaN, Double.NaN,
+                    mapOf("0C" to (900 + i).toDouble(), "0D" to (30 + i).toDouble())
+                )
+            )
+        }
+        journal.close()
+        val result = TripFinalizer.finalize(
+            store.orphanOf(journal),
+            FinalizeSettings(listOf("0C", "0D"), generateKmz = true, saveOds = true),
+            DirStorage(kmzDir), DirStorage(odsDir), FakePlotRenderer
+        )
+        assertTrue(result is FinalizeResult.Completed)
+        org.junit.Assert.assertFalse("empty kmz was written", java.io.File(kmzDir, "2026-01-19.kmz").exists())
+        assertTrue("ods missing for OBD-only trip", odsDir.listFiles()!!.isNotEmpty())
+    }
 }

@@ -187,7 +187,7 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
     val serviceEnabled by DrivingStatus.isEnabled.collectAsState()
     val triggeredBy by DrivingStatus.triggeredBy.collectAsState()
     val lastLocation by DrivingStatus.lastLocation.collectAsState()
-    val currentLogFile by DrivingStatus.currentLogFile.collectAsState()
+    val startedAtMs by DrivingStatus.startedAtMs.collectAsState()
     val obdLink by DrivingStatus.obdLink.collectAsState()
     val obdValues by DrivingStatus.obdValues.collectAsState()
 
@@ -273,8 +273,12 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                     fontSize = 16.sp
                 )
                 Text(
-                    text = currentLogFile?.let { stringResource(R.string.home_recording, it) }
-                        ?: stringResource(R.string.home_no_trip),
+                    text = startedAtMs?.let {
+                        stringResource(
+                            R.string.home_recording,
+                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(it))
+                        )
+                    } ?: stringResource(R.string.home_no_trip),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

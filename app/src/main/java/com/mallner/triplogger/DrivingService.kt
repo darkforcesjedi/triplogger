@@ -28,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -253,6 +254,34 @@ class DrivingService : Service() {
         }
         registerReceiver(bluetoothReceiver, filter)
         setupLocationCallback()
+        observeForceLogging()
+    }
+
+    /**
+     * React to the Home "force logging" toggle while the service is already running.
+     * The toggle itself only persists the setting; without this observer it would
+     * take effect no earlier than the next service start.
+     */
+    private fun observeForceLogging() {
+        serviceScope.launch {
+            appSettingsRepository.appSettingsFlow
+                .distinctUntilChangedBy { it.forceLogging }
+                .collect { settings -> handleLoggingToggle(settings) }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun handleLoggingToggle(settings: AppSettings) {
+        val triggerName = connectedTriggerName(settings.bluetoothDeviceName)
+        when {
+            DrivingStatus.isLogging.value ->
+                if (!settings.forceLogging && triggerName == null) {
+                    // Manual session ended by the toggle (a connected trigger keeps logging).
+                    stopLogging()
+                }
+            triggerName != null -> startLogging(settings, triggerName)
+            settings.forceLogging -> startLogging(settings, "manual")
+        }
     }
 
     override fun onDestroy() {
@@ -303,11 +332,57 @@ class DrivingService : Service() {
         }
 
         startObdPolling(settings)
+        startNotificationTicker()
+    }
+
+    @Volatile private var fixSinceLogging = false
+
+    // Guards against a cancelled ticker's last tick overwriting the idle
+    // notification posted by stopLogging().
+    @Volatile private var notifyGeneration = 0
+    private var notificationJob: Job? = null
+
+    /**
+     * Ticks the recording notification once per second: duration and entry count
+     * move continuously and OBD-only logging has no GPS fixes, so location
+     * callbacks alone cannot keep it current.
+     */
+    private fun startNotificationTicker() {
+        notificationJob?.cancel()
+        fixSinceLogging = false
+        val generation = ++notifyGeneration
+        notificationJob = serviceScope.launch {
+            while (isActive && DrivingStatus.isLogging.value) {
+                val settings = appSettingsRepository.appSettingsFlow.first()
+                val startedAt = DrivingStatus.startedAtMs.value ?: System.currentTimeMillis()
+                val entries = synchronized(journalLock) { currentJournal?.entriesWritten ?: 0 }
+                if (notifyGeneration == generation) {
+                    runCatching {
+                        notificationManager.updateRecording(
+                            durationMs = System.currentTimeMillis() - startedAt,
+                            entries = entries,
+                            gpsEnabled = settings.gpsEnabled,
+                            hasFix = fixSinceLogging,
+                            obdEnabled = settings.obdEnabled,
+                            obdConnected = DrivingStatus.obdLink.value == ObdLinkState.CONNECTED
+                        )
+                    }.onFailure { Log.e("DrivingService", "Notification update failed", it) }
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopNotificationTicker() {
+        notifyGeneration++
+        notificationJob?.cancel()
+        notificationJob = null
     }
 
     private fun stopLogging() {
         Log.d("DrivingService", "Stopped logging")
         DrivingStatus.isLogging.value = false
+        stopNotificationTicker()
         DrivingStatus.triggeredBy.value = null
         DrivingStatus.isObdConnected.value = false
         DrivingStatus.obdValues.value = emptyMap()
@@ -356,7 +431,7 @@ class DrivingService : Service() {
                 val tripId = tripIdFor(System.currentTimeMillis())
                 val journal = store.createTrip(tripId, System.currentTimeMillis(), settings.obdSelectedPids)
                 currentJournal = journal
-                DrivingStatus.currentLogFile.value = "pending/$tripId"
+                DrivingStatus.startedAtMs.value = journal.startMs
             } catch (e: Exception) {
                 Log.e("DrivingService", "Error creating log journal", e)
             }
@@ -385,10 +460,6 @@ class DrivingService : Service() {
             }
             journal ?: return@launch
 
-            val shortTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-            val shortTime = shortTimeFormat.format(Date())
-            val displaySpeed = UnitFormat.mpsToDisplay(location.speed.toDouble(), settings.usUnits)
-
             try {
                 journal.append(
                     GpsRow(
@@ -402,31 +473,11 @@ class DrivingService : Service() {
                         accuracyM = if (location.hasAccuracy()) location.accuracy else 0f
                     )
                 )
+                fixSinceLogging = true
             } catch (e: Exception) {
                 Log.e("DrivingService", "Error writing to log journal", e)
             }
-
-            runCatching {
-                notificationManager.updateStatus(
-                    statusText = getString(R.string.logging_active),
-                    lastFix = shortTime,
-                    speed = displaySpeed.toInt().toString(),
-                    speedUnit = UnitFormat.speedUnitLabel(settings.usUnits).uppercase(),
-                    extra = obdSummaryText()
-                )
-            }.onFailure { Log.e("DrivingService", "Notification update failed", it) }
         }
-    }
-
-    private fun obdSummaryText(): String? {
-        if (!DrivingStatus.isObdConnected.value) return DrivingStatus.obdStatusText.value
-        val us = lastSettings?.usUnits ?: true
-        val rpm = lastObdValues["0C"]?.toInt()?.toString() ?: "-"
-        val speed = lastObdValues["0D"]?.let {
-            val (v, unit) = UnitFormat.convert("km/h", it, us)
-            "${v.toInt()} $unit"
-        } ?: "-"
-        return getString(R.string.notification_obd_summary, speed, rpm)
     }
 
     // -----------------------------------------------------------------------------------------
@@ -572,7 +623,7 @@ class DrivingService : Service() {
             j
         } ?: return
         journal.close()
-        DrivingStatus.currentLogFile.value = null
+        DrivingStatus.startedAtMs.value = null
 
         serviceScope.launch {
             val store = journalStore() ?: run {

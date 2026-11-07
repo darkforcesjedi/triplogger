@@ -31,6 +31,25 @@ class Elm327Client(private val device: BluetoothDevice) {
         private const val INIT_TIMEOUT_MS = 5000L
         private const val CMD_TIMEOUT_MS = 2500L
         private const val MAX_TRIES = 3
+
+        /** Classify a cleaned mode-01 reply for [hex]; visible for tests. */
+        internal fun classifyReply(cleaned: String, hex: String): ObdResponse {
+            val expected = "41$hex"
+            return when {
+                cleaned.startsWith(expected, ignoreCase = true) -> {
+                    val data = cleaned.substring(expected.length)
+                    if (data.isEmpty() || data == "." || data.startsWith("ER")) ObdResponse.NoData else ObdResponse.Ok(data)
+                }
+                cleaned.contains("NODATA", true) || cleaned == "." -> ObdResponse.NoData
+                cleaned.contains("BUS", true) || cleaned.contains("STOPPED", true) -> ObdResponse.BusStopped
+                cleaned.contains("ERROR", true) || cleaned.contains("UNKNOWN", true) -> ObdResponse.Error
+                else -> ObdResponse.Error
+            }
+        }
+
+        /** True when the reply is a well-formed "41xx" frame for a different PID. */
+        internal fun isStaleReplyFor(reply: String, hex: String): Boolean =
+            Regex("^41[0-9A-Fa-f]{2}").containsMatchIn(reply) && !reply.startsWith("41$hex", ignoreCase = true)
     }
 
     private var socket: BluetoothSocket? = null
@@ -120,31 +139,42 @@ class Elm327Client(private val device: BluetoothDevice) {
 
     /** Mode 01 query. hex e.g. "0D". */
     fun queryPid(hex: String): ObdResponse {
-        val expected = "41$hex".replace(" ", "")
-        val reply = send("01$hex", CMD_TIMEOUT_MS) ?: return ObdResponse.Timeout
-        val cleaned = reply.trim().replace(" ", "").replace("\r", "").replace("\n", "")
-        return when {
-            cleaned.startsWith(expected, ignoreCase = true) -> {
-                val data = cleaned.substring(expected.length)
-                if (data.isEmpty() || data == "." || data.startsWith("ER")) ObdResponse.NoData else ObdResponse.Ok(data)
-            }
-            cleaned.contains("NODATA", true) || cleaned == "." -> ObdResponse.NoData
-            cleaned.contains("BUS", true) || cleaned.contains("STOPPED", true) -> ObdResponse.BusStopped
-            cleaned.contains("ERROR", true) || cleaned.contains("UNKNOWN", true) -> ObdResponse.Error
-            else -> ObdResponse.Error
+        val first = queryOnce(hex)
+        // A reply framed for a *different* PID means a late response to an earlier
+        // timed-out command: the adapter is lagging one step behind. Ask again once;
+        // if it happens again treat the link as unreliable rather than logging the
+        // foreign (and possibly stale) value.
+        if (first.second?.let { isStaleReplyFor(it, hex) } == true) {
+            drain()
+            val second = queryOnce(hex)
+            return if (second.second?.let { isStaleReplyFor(it, hex) } == true) ObdResponse.Error else second.first
         }
+        return first.first
+    }
+
+    private fun queryOnce(hex: String): Pair<ObdResponse, String?> {
+        val reply = send("01$hex", CMD_TIMEOUT_MS) ?: return ObdResponse.Timeout to null
+        val cleaned = reply.trim().replace(" ", "").replace("\r", "").replace("\n", "")
+        return classifyReply(cleaned, hex) to cleaned
     }
 
     fun sendRaw(command: String, timeoutMs: Long = CMD_TIMEOUT_MS): String? = send(command, timeoutMs)
 
     private fun send(command: String, timeoutMs: Long): String? {
         val out = output ?: throw IOException("not connected")
-        output?.write((command + "\r").toByteArray(StandardCharsets.US_ASCII))
+        // Discard anything that arrived after a previous timed-out command, so a
+        // late reply can never be mistaken for the response to this request.
+        drain()
+        out.write((command + "\r").toByteArray(StandardCharsets.US_ASCII))
         out.flush()
         return readUntilPrompt(timeoutMs)
     }
 
-    /** ELM327 signals the end of a response with the '>' prompt character. */
+    /**
+     * Reads up to the ELM327 '>' end-of-response prompt. A timeout returns null
+     * even if partial bytes arrived: an incomplete frame is worse than none, and
+     * the remainder is drained before the next command.
+     */
     private fun readUntilPrompt(timeoutMs: Long): String? {
         val `in` = input ?: return null
         val sb = StringBuilder()
@@ -168,7 +198,7 @@ class Elm327Client(private val device: BluetoothDevice) {
                 return null
             }
         }
-        return if (sb.isEmpty()) null else sb.toString().trim()
+        return null
     }
 
     private fun drain() {

@@ -351,6 +351,10 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
             val obdStatus: String? = when {
                 !serviceEnabled -> stringResource(R.string.tile_service_off)
                 connected -> null // hidden when connected
+                // Logging has been triggered: the trigger question is settled and
+                // the watcher is always retrying - never claim "Waiting for
+                // trigger" (or idle) while a session is running.
+                isLogging && obdLink != ObdLinkState.TIMED_OUT -> stringResource(R.string.tile_connecting)
                 obdLink == ObdLinkState.IDLE -> stringResource(R.string.tile_idle)
                 obdLink == ObdLinkState.WAITING_FOR_DEVICE -> stringResource(R.string.tile_waiting_trigger)
                 obdLink == ObdLinkState.CONNECTING -> stringResource(R.string.tile_connecting)

@@ -142,6 +142,10 @@ class DrivingService : Service() {
     /** OBD tile state while no logging session is running. */
     private fun updateIdleObdLink(settings: AppSettings) {
         lastSettings = settings
+        // A running session owns the state (the watcher publishes CONNECTING /
+        // TIMED_OUT / CONNECTED); overwriting it with an idle value here made
+        // the tile flash "Waiting for trigger" while logging was active.
+        if (DrivingStatus.isLogging.value) return
         DrivingStatus.obdLink.value =
             if (settings.obdEnabled) ObdLinkState.WAITING_FOR_DEVICE else ObdLinkState.IDLE
     }

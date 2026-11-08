@@ -23,7 +23,8 @@ The current estimator (haversine sum with a 10 m jitter gate) deletes every
 segment measuring <= gate: below ~5 m/s at 2 s polling (10 mph) true travel
 is dropped, so stop-and-go driving systematically under-reports deductible
 miles. Compute ALL estimators that available sensors support at finalize
-time, record each in trip.properties, and display the best estimate:
+time, record each in the trip metadata (trip.properties now; DB column once
+the metadata database lands), and display the best estimate:
 
 - distance_odo_m (best): real odometer delta. Probe Mode 01 PID A6 once at
   trip start; verified on the 2016 Escape (2026-11-08, odotest scan):
@@ -60,19 +61,33 @@ multi-source output (leave legacy distance_m displayed until recomputed).
 
 ## Trip metadata database (foundation for categories + multi-select)
 
-The Trips tab lists SAF folders and parses trip.properties per visible tile;
-that is why it slows down with a big archive. Keep trip metadata in one app
-database (Room or SQLiteOpenHelper): imported/reconciled from trip.properties
-during the storage scan and after each finalize, tiles render from the DB.
-trip.properties stays written as-is: it remains the crash-safe source of
-truth and the user-browsable record, the DB is a rebuildable index (delete
-DB rows on storage re-pick; rescan rebuilds).
+Replace trip.properties entirely with one SQLite database stored in the
+journal root (beside pending/ success/ failed/, e.g. "triplogger.db"), so
+all trip state lives in exactly one place; two stores risk drift. The Trips
+tab renders from the DB, which is why folder enumeration disappears from the
+fast path.
 
-- Primary key = the epoch track id (t<start_ms>), stable across renames.
+- Migration: one-time scan imports every existing trip.properties into the
+  DB (keyed by the epoch track id, stable across renames), then the
+  properties files are deleted; after migration nothing reads or writes
+  them. Journals (gps/obd CSVs) remain the raw data as today.
+- Storage mechanics: open SQLite via the underlying filesystem path of the
+  selected SAF folder (primary external storage paths resolve; the app
+  already treats that folder as a normal directory); WAL mode; on storage
+  re-pick, a new DB is created there and populated by the first scan.
+- Crash safety moves from atomic property writes into transactions:
+  trip lifecycle rows commit around the folder move, and a startup
+  reconciliation scan repairs drift both ways (folder without row is
+  re-imported from journal names and CSV headers; row without folder gets
+  raw availability cleared).
 - Track raw availability per trip: when a trip row exists but its journal
   folder is gone from the temp store (user deleted/moved it), the tile shows
   a "raw data not found" indicator and reprocess/re-run are disabled; the
   converted KMZ/ODS outputs remain listed.
+- DB corruption fallback: losing the DB never loses trip data (journals and
+  KMZ/ODS outputs are untouched); a rescan rebuilds rows from folder names,
+  CSV headers, and output listings, though free-form fields (titles,
+  categories) go with it, so the journal root belongs in backups.
 
 ## KMZ speed-plot PNG names should use the trip id
 

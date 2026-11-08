@@ -26,8 +26,11 @@ miles. Compute ALL estimators that available sensors support at finalize
 time, record each in trip.properties, and display the best estimate:
 
 - distance_odo_m (best): real odometer delta. Probe Mode 01 PID A6 once at
-  trip start (decodes (A*256+B)/10, normally km); if no reply, optionally
-  try a user-entered vendor-specific PID (Settings field: hex + scale +
+  trip start; verified on the 2016 Escape (2026-11-08, odotest scan):
+  reply 41A60008BAFE = 4-byte big-endian tenths of KILOMETERS even on a
+  miles-dash car, so decode ABCD/10 km (fall back to 2-byte AB/10 for other
+  cars) and convert for display. If A6 is absent, optionally try a
+  user-entered vendor-specific PID (Settings field: hex + scale +
   unit, empty disables it). On success re-read periodically (~every 60 s)
   and at finalization; delta = last - first, monotonic guard. Validate the
   source: reject constant/garbage replies (0x00/0xFFFF) and require the

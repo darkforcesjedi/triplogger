@@ -30,8 +30,8 @@ the metadata database lands), and display the best estimate:
   setup. At trip start, probe Mode 01 PID A6 once (short timeout, tolerate
   no-reply/NRC so connection setup never fails over it and cars without it
   never see it again that trip); if it answers, poll it at a low cadence
-  (~every 60 s) alongside the live PIDs and keep the latest reading. Decode
-  verified on the 2016 Escape (2026-11-08 odotest scan): 41A60008BAFE =
+  (~every 15 s) alongside the live PIDs and keep the latest reading. Decode
+  verified on the 2022 Escape (2026-11-08 odotest scan): 41A60008BAFE =
   4-byte big-endian tenths of KILOMETERS even on a miles-dash car
   (ABCD/10 km, fall back to 2-byte AB/10 for other cars; convert for
   display).

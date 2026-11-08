@@ -12,20 +12,26 @@ android {
         version = release(36)
     }
 
-    // Release signing: create keystore.properties in the project root (git-ignored)
-    // with storeFile/storePassword/keyAlias/keyPassword; without it, assembleRelease
-    // produces an unsigned APK on purpose so anyone can sign with their own key.
+        // Release signing, secret-free at rest: keystore.properties (git-ignored)
+    // stores only the NON-secret pointers (storeFile, keyAlias). The passwords
+    // are supplied per-invocation via TRIPLOGGER_STORE_PASSWORD /
+    // TRIPLOGGER_KEY_PASSWORD;
+    // without them assembleRelease produces an unsigned APK on purpose so
+    // anyone can build and sign with their own key.
     val keystoreProperties = Properties().apply {
         val f = rootProject.file("keystore.properties")
         if (f.exists()) f.inputStream().use { load(it) }
     }
-    if (keystoreProperties.getProperty("storeFile") != null) {
+    val releaseStorePassword = System.getenv("TRIPLOGGER_STORE_PASSWORD").orEmpty()
+    val signingAvailable = keystoreProperties.getProperty("storeFile") != null && releaseStorePassword.isNotEmpty()
+    if (signingAvailable) {
         signingConfigs {
             create("release") {
                 storeFile = file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storePassword = releaseStorePassword
+                keyAlias = keystoreProperties.getProperty("keyAlias", "triplogger")
+                keyPassword = System.getenv("TRIPLOGGER_KEY_PASSWORD").orEmpty()
+                    .ifEmpty { releaseStorePassword } // RETURN-at-generation alias
             }
         }
     }
@@ -47,7 +53,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (keystoreProperties.getProperty("storeFile") != null) {
+            if (signingAvailable) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

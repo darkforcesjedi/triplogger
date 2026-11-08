@@ -182,6 +182,7 @@
     <string name="trips_rename_clear">Clear name</string>
     <string name="trips_lookup">Look up</string>
     <string name="trips_lookup_failed">Placename lookup failed (%1$s)</string>
+    <string name="trips_no_map_app">No app or browser available to open the map</string>
     <string name="trips_rerun">Re-run post-processing</string>
     <string name="trips_discard">Discard</string>
     <string name="trips_start">Start</string>

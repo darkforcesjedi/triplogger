@@ -343,7 +343,8 @@ private fun TripDetail(
             time = trip.startMs.takeIf { it > 0 }?.let { timeFmt.format(Date(it)) },
             tz = tz,
             showLookup = !hasPlaces,
-            onLookUp = onLookUp
+            onLookUp = onLookUp,
+            onOpenMap = coords?.first?.let { (lat, lon) -> { openInMaps(context, lat, lon) } }
         )
         EndPointLine(
             label = stringResource(R.string.trips_end),
@@ -352,7 +353,8 @@ private fun TripDetail(
             time = trip.endMs.takeIf { it > 0 }?.let { timeFmt.format(Date(it)) },
             tz = tz,
             showLookup = false,
-            onLookUp = {}
+            onLookUp = {},
+            onOpenMap = coords?.second?.let { (lat, lon) -> { openInMaps(context, lat, lon) } }
         )
 
         Spacer(Modifier.height(16.dp))
@@ -406,12 +408,25 @@ private fun TripDetail(
     }
 }
 
-private fun formatCoordinates(lat: Double, lon: Double): String =
-    "%.5f, %.5f".format(lat, lon)
+/**
+ * Full-precision display: the shortest string that round-trips to the exact
+ * stored double - never rounded, since even 1e-5 degrees is ~1 m.
+ */
+private fun formatCoordinates(lat: Double, lon: Double): String = "$lat, $lon"
+
+/** Open the point in OpenStreetMap (app if installed, browser otherwise). */
+private fun openInMaps(context: android.content.Context, lat: Double, lon: Double) {
+    val uri = android.net.Uri.parse(
+        "https://www.openstreetmap.org/?mlat=$lat&mlon=$lon#map=19/$lat/$lon"
+    )
+    runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri)) }
+        .onFailure { android.widget.Toast.makeText(context, R.string.trips_no_map_app, android.widget.Toast.LENGTH_SHORT).show() }
+}
 
 /**
  * One Start/End row: prominent place name (coordinates until a lookup ran),
- * subtle time + zone abbreviation beneath, optional Look-up button.
+ * subtle time + zone abbreviation beneath, optional Look-up button; the
+ * place line taps through to OpenStreetMap.
  */
 @Composable
 private fun EndPointLine(
@@ -421,7 +436,8 @@ private fun EndPointLine(
     time: String?,
     tz: String?,
     showLookup: Boolean,
-    onLookUp: () -> Unit
+    onLookUp: () -> Unit,
+    onOpenMap: (() -> Unit)?
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -431,14 +447,29 @@ private fun EndPointLine(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.width(48.dp)
             )
-            Text(
-                place ?: coordinates ?: "—",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
+            val text = place ?: coordinates ?: "—"
+            if (onOpenMap != null) {
+                Text(
+                    text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onOpenMap)
+                )
+            } else {
+                Text(
+                    text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             if (showLookup) {
                 TextButton(onClick = onLookUp) { Text(stringResource(R.string.trips_lookup), fontSize = 12.sp) }
             }

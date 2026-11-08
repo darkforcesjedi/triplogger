@@ -80,6 +80,16 @@ class TripsMetadataTest {
     }
 
     @Test
+    fun loggedWithOnlyShowsVersionNames() {
+        // interim dev builds stored the versionCode ("2") - never user-facing
+        assertNull(TripEntry.displayVersion("2"))
+        assertNull(TripEntry.displayVersion(""))
+        assertNull(TripEntry.displayVersion(null))
+        assertEquals("1.1", TripEntry.displayVersion("1.1"))
+        assertEquals("1.2-beta", TripEntry.displayVersion("1.2-beta"))
+    }
+
+    @Test
     fun distanceIsHaversinePath() {
         val meterPerDegLat = 111_195.0
         val rows = listOf(

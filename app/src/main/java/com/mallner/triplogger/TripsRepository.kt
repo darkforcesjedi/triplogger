@@ -68,7 +68,17 @@ data class TripEntry(
         }
 
     /** Version name; numeric values are the interim versionCode field (pre-1.2). */
-    val loggedWith: String? = appVersionName?.takeUnless { it.all(Char::isDigit) }
+    val loggedWith: String? get() = displayVersion(appVersionName)
+
+    companion object {
+        /**
+         * User-facing logged-with version. Trips finalized by interim dev
+         * builds stored the numeric versionCode (e.g. "2") - those values are
+         * not meaningful to users (hidden until a re-run overwrites them with
+         * the version NAME, e.g. "1.1").
+         */
+        fun displayVersion(raw: String?): String? = raw?.takeUnless { it.isEmpty() || it.all(Char::isDigit) }
+    }
 }
 
 /**

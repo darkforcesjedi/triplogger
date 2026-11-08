@@ -17,6 +17,44 @@ Trips only log Start/End today. To reconcile against Uber/DoorDash logs:
 - Interacts with discard-below-entries: a 20-stop delivery crawl is a
   legitimate trip even at low poll counts.
 
+## Multi-source distance estimation (tax-grade mileage)
+
+The current estimator (haversine sum with a 10 m jitter gate) deletes every
+segment measuring <= gate: below ~5 m/s at 2 s polling (10 mph) true travel
+is dropped, so stop-and-go driving systematically under-reports deductible
+miles. Compute ALL estimators that available sensors support at finalize
+time, record each in trip.properties, and display the best estimate:
+
+- distance_odo_m (best): real odometer delta. Probe Mode 01 PID A6 once at
+  trip start (decodes (A*256+B)/10, normally km); if no reply, optionally
+  try a user-entered vendor-specific PID (Settings field: hex + scale +
+  unit, empty disables it). On success re-read periodically (~every 60 s)
+  and at finalization; delta = last - first, monotonic guard. Validate the
+  source: reject constant/garbage replies (0x00/0xFFFF) and require the
+  delta to stay within ~15% of the wheel-speed integration over the same
+  window. Log odometer samples to the journal so re-runs are deterministic.
+- distance_obd_m: trapezoidal integration of PID 0D wheel speed
+  (sum (v1+v2)/2 * dt); this is the dash speedometer signal, so it matches
+  what the driver sees and the odometer within tire-size tolerance.
+- distance_gps_speed_m: trapezoidal integration of GPS Doppler speed with
+  ZUPT-style motion gating (stationary = speed < ~0.4 m/s for N consecutive
+  fixes freezes the accumulator; fixes without a speed field fall back to
+  the gated haversine segment for that step).
+- distance_track_m: today's haversine-with-gate sum, kept as the fallback
+  for GPS-only logs and as a cross-check.
+- distance_src: odo | obd | gps_speed | track, chosen by that priority
+  among the values present. Trips rows and the detail sheet show the best
+  estimate; the detail sheet lists all recorded values with their source
+  labels (audit trail for expense reports).
+
+Implementation notes: ObdPids entry A6 is probe-only (never polled live;
+short timeout, unsupported-NRC tolerance so connection setup never fails
+over it); pure distance_estimators(rows) function in the finalizer with
+unit tests on synthetic traces (parked jitter, 3 m/s crawl, highway,
+OBD-absent) asserting the crawl no longer under-counts; store
+distance_algo = 1 so re-runs can distinguish old distance_m from
+multi-source output (leave legacy distance_m displayed until recomputed).
+
 ## Activity tab: day-section headers
 
 The Trips tab groups rows under Today / Yesterday / date headers; Activity is

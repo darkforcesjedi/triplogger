@@ -42,14 +42,15 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
         return subDir(ARCHIVE_NAME)
     }
 
-    override fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal {
+    override fun createTrip(tripId: String, startMs: Long, pids: List<String>, trigger: String): LiveJournal {
         val pending = subDir("pending")
         pending.findFile(tripId)?.delete()
         val dir = pending.createDirectory(tripId) ?: throw IOException("Cannot create trip directory $tripId")
 
         writeFile(dir, "trip.properties",
             "trip_id=$tripId\nstart_ms=$startMs\npids=${pids.joinToString(",")}\n" +
-                "tz_id=${TripFormats.deviceZoneId()}\ntz_offset_min=${TripFormats.deviceOffsetMin(startMs)}\n")
+                "tz_id=${TripFormats.deviceZoneId()}\ntz_offset_min=${TripFormats.deviceOffsetMin(startMs)}\n" +
+                if (trigger.isNotEmpty()) "trigger=$trigger\n" else "")
 
         // Segment files are created lazily: index 0 when the journal opens,
         // higher indices on each split().
@@ -89,6 +90,17 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
         }
         return trips
     }
+
+    override fun pendingTrips(): List<OrphanTrip> = tripsUnder("pending")
+
+    override fun failedTrips(): List<OrphanTrip> = tripsUnder("failed")
+
+    private fun tripsUnder(name: String): List<OrphanTrip> =
+        root.findFile(name)?.takeIf { it.isDirectory }?.listFiles()
+            ?.filter { it.isDirectory && hasProps(it) }
+            ?.sortedBy { it.name }
+            ?.map { SafOrphanTrip(context, it) as OrphanTrip }
+            ?: emptyList()
 
     private fun hasProps(dir: DocumentFile): Boolean =
         dir.findFile("trip.properties") != null || dir.findFile("trip.properties.txt") != null
@@ -147,6 +159,17 @@ class SafOrphanTrip(private val context: Context, val dir: DocumentFile) : Orpha
         } catch (e: Exception) {
             null
         }
+    }
+
+    override fun writeText(fileName: String, text: String) {
+        // Same octet-stream trick as SafJournalStore.writeFile: keeps the exact
+        // file name on external-storage providers (text/plain appends .txt).
+        dir.findFile(fileName)?.delete()
+        dir.findFile("$fileName.txt")?.delete()
+        val doc = dir.createFile("application/octet-stream", fileName)
+            ?: throw IOException("Cannot create $fileName in ${dir.name}")
+        context.contentResolver.openOutputStream(doc.uri, "w")?.use { it.write(text.toByteArray()) }
+            ?: throw IOException("Cannot write $fileName")
     }
 
     override fun listFileNames(): List<String> =

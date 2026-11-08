@@ -2,32 +2,28 @@
 
 Ideas queued for future iterations (not scoped/committed to yet).
 
-## Trips tab
+## Trips tab — IN PROGRESS (feat/trips-activity-tabs)
 
-A third tab (Home / Settings / **Trips**) for reviewing what is stored, without
-leaving the app:
+Four-tab nav (Home / Trips / Activity / Settings). Rows render purely from
+trip.properties metadata (end_ms, entries, distance_m, max_speed_mps,
+converted, kmz_day, ods_file, status_reason, title, trigger), written by the
+finalizer; user titles rename the KMZ placemark in place via the stable
+`t<epochms>` track id (legacy label ids stay replaceable, never duplicated).
+Placenames/timezone via Nominatim (opt-in, attribution in Settings).
+Discard moves journals to failed/ with a reason; "Clear failed" empties it;
+truly empty journals are still deleted. Detail sheet: rename, re-run,
+discard, look up, outputs list.
 
-- List archived trips from the temp-storage journal store (`archive/`) with
-  start time, duration, entry count, distance, and which outputs exist
-  (KMZ / ODS) for each.
-- Quick actions per trip: open its KMZ (maps), open the output folder, delete
-  (moves journal to `failed/` or removes outputs + journal), and a "re-run
-  post-processing" for a single trip.
-- Section for anything in `pending/` (interrupted sessions awaiting recovery)
-  so the crash-recovery state is visible instead of implicit.
+Remaining before merge: field-test rename/rerun/lookup against real SAF
+folders, dark-theme polish of the detail sheet, day-section headers for the
+Activity tab.
 
-## Activity log tab
+## Activity log tab — IN PROGRESS (same branch)
 
-A chronological history of what the logger actually did, to make field
-diagnostics possible without `adb logcat`:
-
-- Events to capture: trip started (trigger: device name / manual / recovery),
-  trip ended (entries, duration, segments), post-processing result per trip
-  (ODS written, KMZ placemark id, converted | skipped | failed + reason),
-  OBD connect/lost, journal split, rebuild runs (N trips re-converted).
-- Persist as a small rolling log (e.g. JSONL in app-private storage, cap ~500
-  events) with a simple list UI; newest first, with a "share diagnostics"
-  action that attaches the recent entries for bug reports.
+Rolling JSONL (cap 500, app-private): trip started/ended/converted/
+recovered/discarded/failed/renamed, places resolved, OBD connected/lost/
+timeout, journal split, rebuild runs, failed-cleared. Share diagnostics via
+FileProvider.
 
 ## Discard trips with fewer than X entries — DONE
 

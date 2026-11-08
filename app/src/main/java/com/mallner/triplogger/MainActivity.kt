@@ -34,7 +34,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -83,6 +85,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ActivityLog.init(this)
         enableEdgeToEdge()
         setContent {
             TripLoggerTheme {
@@ -170,6 +173,10 @@ fun TripLoggerApp() {
         ) { innerPadding ->
             if (currentDestination == AppDestinations.HOME) {
                 HomeScreen(modifier = Modifier.padding(innerPadding), permissionsGranted = permissionsGranted, onRequestPermissions = { launcher.launch(permissionsToRequest) })
+            } else if (currentDestination == AppDestinations.TRIPS) {
+                TripsScreen(modifier = Modifier.padding(innerPadding), appSettingsRepository)
+            } else if (currentDestination == AppDestinations.ACTIVITY) {
+                ActivityScreen(modifier = Modifier.padding(innerPadding))
             } else {
                 SettingsScreen(modifier = Modifier.padding(innerPadding), appSettingsRepository)
             }
@@ -575,5 +582,7 @@ enum class AppDestinations(
     val icon: ImageVector,
 ) {
     HOME(R.string.nav_home, Icons.Default.Home),
+    TRIPS(R.string.nav_trips, Icons.Default.List),
+    ACTIVITY(R.string.nav_activity, Icons.Default.DateRange),
     SETTINGS(R.string.nav_settings, Icons.Default.Settings),
 }

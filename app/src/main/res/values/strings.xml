@@ -1,4 +1,10 @@
 <resources>
+    <!--
+      Localization conventions:
+      - All user-facing text lives here (no hardcoded strings in Kotlin/XML layouts).
+      - Captions/support text under user entry fields: keep as short as practical,
+        i.e. only a few words.
+    -->
     <!-- ============================================================ -->
     <!-- All user-facing text lives here. Add a translation by       -->
     <!-- creating res/values-<lang>/strings.xml (e.g. values-es).    -->
@@ -9,6 +15,8 @@
     <!-- General -->
     <string name="app_name">Driving Trip Logger</string>
     <string name="nav_home">Home</string>
+    <string name="nav_trips">Trips</string>
+    <string name="nav_activity">Activity</string>
     <string name="nav_settings">Settings</string>
     <string name="action_select">Select</string>
     <string name="action_scan">Scan</string>
@@ -58,6 +66,8 @@
     <string name="gps_speed_value">%1$s %2$s</string>
     <string name="unit_mph">mph</string>
     <string name="unit_kph">km/h</string>
+    <string name="unit_miles">mi</string>
+    <string name="unit_km">km</string>
 
     <!-- Home: OBD tile -->
     <string name="obd_tile_title">OBD-II</string>
@@ -152,6 +162,60 @@
     <string name="obd_status_connecting">OBD: connecting…</string>
     <string name="notification_connected">Connected</string>
     <string name="notification_new_trip">New trip</string>
+    <string name="settings_place_lookups">Look Up Placenames from Coordinates</string>
+    <string name="settings_place_lookups_caption">Provided by nominatim.openstreetmap.org</string>
+
+    <!-- Trips tab -->
+    <string name="trips_title">Trips</string>
+    <string name="trips_refresh">Refresh</string>
+    <string name="trips_empty">No trips yet. Recorded trips appear here after each drive.</string>
+    <string name="trips_no_storage">Set a Temporary Storage Location in Settings to record and list trips.</string>
+    <string name="trips_unfinished">Unfinished (%1$d)</string>
+    <string name="trips_failed_section">Failed / discarded (%1$d)</string>
+    <string name="trips_clear_failed">Clear failed</string>
+    <string name="trips_clear_failed_confirm">Permanently delete every trip in the Failed / discarded section? Recorded KMZ/ODS output of other trips is not affected.</string>
+    <string name="trips_attribution">Place names © OpenStreetMap contributors (nominatim.openstreetmap.org)</string>
+    <string name="trips_rename_title">Trip name</string>
+    <string name="trips_rename_hint">Name shown on the trip and in the KMZ</string>
+    <string name="trips_rename_apply">Save</string>
+    <string name="trips_rename_clear">Clear name</string>
+    <string name="trips_lookup">Look up</string>
+    <string name="trips_lookup_failed">Placename lookup failed (%1$s)</string>
+    <string name="trips_rerun">Re-run post-processing</string>
+    <string name="trips_discard">Discard</string>
+    <string name="trips_start">Start</string>
+    <string name="trips_end">End</string>
+    <string name="trips_outputs">Outputs</string>
+    <string name="trips_logged_with">Logged with app v%1$d · re-run to refresh stats</string>
+    <string name="trips_stat_distance">Distance</string>
+    <string name="trips_stat_duration">Duration</string>
+    <string name="trips_stat_max">Max speed</string>
+    <string name="trips_stat_entries">Entries</string>
+    <string name="trips_stat_segments">Segments</string>
+    <string name="trips_stat_trigger">Trigger</string>
+    <string name="trips_distance_value">%1$s %2$s</string>
+
+    <!-- Activity tab -->
+    <string name="activity_title">Activity</string>
+    <string name="activity_share">Share diagnostics</string>
+    <string name="activity_empty">Nothing logged yet — events appear here as trips start, end, convert, and as the OBD adapter comes and goes.</string>
+    <string name="activity_event_trip_started">Trip started</string>
+    <string name="activity_event_trip_ended">Trip ended</string>
+    <string name="activity_event_trip_converted">Converted</string>
+    <string name="activity_event_trip_reconverted">Re-converted</string>
+    <string name="activity_event_trip_recovered">Recovered after restart</string>
+    <string name="activity_event_trip_discarded">Discarded (too few entries)</string>
+    <string name="activity_event_trip_discarded_manual">Discarded by user</string>
+    <string name="activity_event_trip_failed">Conversion failed</string>
+    <string name="activity_event_trip_renamed">Renamed</string>
+    <string name="activity_event_places_resolved">Placenames resolved</string>
+    <string name="activity_event_obd_connected">OBD connected</string>
+    <string name="activity_event_obd_lost">OBD connection lost</string>
+    <string name="activity_event_obd_timeout">OBD timeout</string>
+    <string name="activity_event_journal_split">Journal split</string>
+    <string name="activity_event_rebuild_run">Rebuild from archive</string>
+    <string name="activity_event_failed_cleared">Failed section cleared</string>
+
     <plurals name="notification_entries">
         <item quantity="one">%1$d entry</item>
         <item quantity="other">%1$d entries</item>

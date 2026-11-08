@@ -61,6 +61,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -78,6 +79,8 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.documentfile)
     testImplementation(libs.junit)
+    // Real org.json for unit tests (the mockable android.jar only stubs it)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

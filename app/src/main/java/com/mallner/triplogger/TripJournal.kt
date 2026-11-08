@@ -49,10 +49,16 @@ data class ObdRow(
  * record: "Rebuild logs from archive" re-converts it into the output formats.
  */
 interface JournalStore {
-    fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal
+    fun createTrip(tripId: String, startMs: Long, pids: List<String>, trigger: String = ""): LiveJournal
 
     /** Every trip found in pending/ and failed/, oldest first. */
     fun unfinishedTrips(): List<OrphanTrip>
+
+    /** Trips in pending/ (live recording or interrupted session), oldest first. */
+    fun pendingTrips(): List<OrphanTrip>
+
+    /** Trips in failed/ (conversion errors, discards), oldest first. */
+    fun failedTrips(): List<OrphanTrip>
 
     /** Every successfully archived trip, oldest first. */
     fun archivedTrips(): List<OrphanTrip>
@@ -196,6 +202,9 @@ class LiveJournal(
 abstract class OrphanTrip(val name: String) {
     abstract fun readText(fileName: String): String?
 
+    /** Persist [text] as [fileName], replacing any existing file (SAF or File). */
+    abstract fun writeText(fileName: String, text: String)
+
     /** All file names in the trip directory (used to discover segments). */
     abstract fun listFileNames(): List<String>
 
@@ -207,6 +216,49 @@ abstract class OrphanTrip(val name: String) {
         }
         return props
     }
+
+    /**
+     * Merge [updates] into trip.properties (null value removes the key) and
+     * persist. Values are single-line by construction; newlines in user input
+     * (the trip title) are flattened. This is the write path behind the
+     * finalize-time stats, the user title and the placename lookups.
+     */
+    fun mergeProps(updates: Map<String, String?>) {
+        val props = LinkedHashMap(readProps())
+        updates.forEach { (k, v) ->
+            val clean = v?.replace('\n', ' ')?.replace('\r', ' ')?.trim()
+            if (clean.isNullOrEmpty()) props.remove(k) else props[k] = clean
+        }
+        writeText(
+            "trip.properties",
+            props.entries.joinToString(separator = "\n", postfix = "\n") { "${it.key}=${it.value}" }
+        )
+    }
+
+    // ------------------------------------------------------ trip metadata (v1.2)
+    /** User-assigned trip title (shown in the Trips tab, KMZ placemark, chart). */
+    fun title(): String? = readProps()["title"]?.takeIf { it.isNotEmpty() }
+    fun trigger(): String? = readProps()["trigger"]?.takeIf { it.isNotEmpty() }
+    fun endMs(): Long = readProps()["end_ms"]?.toLongOrNull() ?: 0L
+    fun distanceM(): Double = readProps()["distance_m"]?.toDoubleOrNull() ?: Double.NaN
+    fun maxSpeedMps(): Float = readProps()["max_speed_mps"]?.toFloatOrNull() ?: Float.NaN
+    fun segmentsCount(): Int = readProps()["segments"]?.toIntOrNull() ?: 0
+    fun appVersion(): Int = readProps()["app_version"]?.toIntOrNull() ?: 0
+    fun isConverted(): Boolean = readProps()["converted"] == "1"
+    fun convertedAtMs(): Long = readProps()["converted_at"]?.toLongOrNull() ?: 0L
+    fun kmzDay(): String? = readProps()["kmz_day"]?.takeIf { it.isNotEmpty() }
+    fun odsFile(): String? = readProps()["ods_file"]?.takeIf { it.isNotEmpty() }
+    fun statusReason(): String? = readProps()["status_reason"]?.takeIf { it.isNotEmpty() }
+    fun tzName(): String? = readProps()["tz_name"]?.takeIf { it.isNotEmpty() }
+    fun placeStart(): String? = readProps()["place_start"]?.takeIf { it.isNotEmpty() }
+    fun placeEnd(): String? = readProps()["place_end"]?.takeIf { it.isNotEmpty() }
+
+    /** Unique KMZ track id (epoch millis of start: DST- and name-independent). */
+    fun trackId(): String = "t${startMs()}"
+
+    /** Pre-v1.2 track id derived from the wall-clock label (kept for matching). */
+    fun legacyTrackId(): String =
+        TripFormats.tripLabel(startMs(), tzOffsetMin()).replace('.', ':')
 
     fun pids(): List<String> =
         readProps()["pids"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
@@ -353,7 +405,7 @@ class FileJournalStore(private val root: File) : JournalStore {
         return archive.apply { mkdirs() }
     }
 
-    override fun createTrip(tripId: String, startMs: Long, pids: List<String>): LiveJournal {
+    override fun createTrip(tripId: String, startMs: Long, pids: List<String>, trigger: String): LiveJournal {
         val dir = File(pendingRoot, tripId)
         if (!dir.mkdirs() && !dir.isDirectory) throw IOException("Could not create ${dir.absolutePath}")
         File(dir, "trip.properties").writeText(
@@ -363,6 +415,7 @@ class FileJournalStore(private val root: File) : JournalStore {
                 append("pids=").append(pids.joinToString(",")).append('\n')
                 append("tz_id=").append(TripFormats.deviceZoneId()).append('\n')
                 append("tz_offset_min=").append(TripFormats.deviceOffsetMin(startMs)).append('\n')
+                if (trigger.isNotEmpty()) append("trigger=").append(trigger).append('\n')
             }
         )
         return LiveJournal(tripId, startMs, pids) { index ->
@@ -382,6 +435,16 @@ class FileJournalStore(private val root: File) : JournalStore {
         }
         return trips
     }
+
+    override fun pendingTrips(): List<OrphanTrip> = tripsUnder(pendingRoot)
+
+    override fun failedTrips(): List<OrphanTrip> = tripsUnder(failedRoot)
+
+    private fun tripsUnder(root: File): List<OrphanTrip> =
+        root.listFiles { f: File -> f.isDirectory && (File(f, "trip.properties").isFile || File(f, "trip.properties.txt").isFile) }
+            ?.sortedBy { it.name }
+            ?.map { FileOrphanTrip(it) as OrphanTrip }
+            ?: emptyList()
 
     override fun archivedTrips(): List<OrphanTrip> =
         archiveRoot().listFiles { f -> f.isDirectory && (File(f, "trip.properties").isFile || File(f, "trip.properties.txt").isFile) }
@@ -412,6 +475,10 @@ class FileJournalStore(private val root: File) : JournalStore {
 class FileOrphanTrip(val dir: File) : OrphanTrip(dir.name) {
     override fun readText(fileName: String): String? =
         File(dir, fileName).takeIf { it.isFile }?.readText()
+
+    override fun writeText(fileName: String, text: String) {
+        File(dir, fileName).writeText(text)
+    }
 
     override fun listFileNames(): List<String> = dir.list()?.toList() ?: emptyList()
 }

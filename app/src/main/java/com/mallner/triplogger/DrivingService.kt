@@ -183,7 +183,7 @@ class DrivingService : Service() {
                 serviceScope.launch {
                     val settings = appSettingsRepository.appSettingsFlow.first()
                     finalizeCurrentJournal()
-                    createJournal(settings)
+                    createJournal(settings, DrivingStatus.triggeredBy.value ?: "manual")
                 }
             }
             return START_STICKY
@@ -226,6 +226,7 @@ class DrivingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ActivityLog.init(this)
         DrivingStatus.isEnabled.value = true
         appSettingsRepository = AppSettingsRepository(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
@@ -322,6 +323,7 @@ class DrivingService : Service() {
         DrivingStatus.isLogging.value = true
         DrivingStatus.triggeredBy.value =
             trigger ?: connectedTriggerName(settings.bluetoothDeviceName) ?: "manual"
+        ActivityLog.log("trip_started", DrivingStatus.triggeredBy.value ?: "")
 
         val notification = notificationManager.buildInitialNotification(
             getString(R.string.service_enabled),
@@ -329,7 +331,7 @@ class DrivingService : Service() {
         )
         notificationManager.notify(notificationManager.notificationID(), notification)
 
-        createJournal(settings)
+        createJournal(settings, DrivingStatus.triggeredBy.value)
         if (settings.gpsEnabled) {
             val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, settings.loggingFrequency * 1000L).build()
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
@@ -397,6 +399,17 @@ class DrivingService : Service() {
         obdJob?.cancel()
         obdJob = null
 
+        runCatching {
+            val journal = synchronized(journalLock) { currentJournal }
+            val entries = journal?.entriesWritten ?: 0
+            val startedAt = DrivingStatus.startedAtMs.value
+            ActivityLog.log(
+                "trip_ended",
+                journal?.tripId ?: "",
+                "entries" to entries.toString(),
+                "duration_s" to ((System.currentTimeMillis() - (startedAt ?: System.currentTimeMillis())) / 1000).toString()
+            )
+        }
         fusedLocationClient.removeLocationUpdates(locationCallback)
         finalizeCurrentJournal()
 
@@ -427,13 +440,13 @@ class DrivingService : Service() {
         return fmt.format(Date(timestampMs))
     }
 
-    private fun createJournal(settings: AppSettings) {
+    private fun createJournal(settings: AppSettings, trigger: String?) {
         synchronized(journalLock) {
             if (currentJournal != null) return
             try {
                 val store = journalStore() ?: return
                 val tripId = tripIdFor(System.currentTimeMillis())
-                val journal = store.createTrip(tripId, System.currentTimeMillis(), settings.obdSelectedPids)
+                val journal = store.createTrip(tripId, System.currentTimeMillis(), settings.obdSelectedPids, trigger ?: "")
                 currentJournal = journal
                 DrivingStatus.startedAtMs.value = journal.startMs
             } catch (e: Exception) {
@@ -446,7 +459,7 @@ class DrivingService : Service() {
         serviceScope.launch {
             val settings = appSettingsRepository.appSettingsFlow.first()
             var journal: LiveJournal? = synchronized(journalLock) {
-                if (currentJournal == null) createJournal(settings)
+                if (currentJournal == null) createJournal(settings, DrivingStatus.triggeredBy.value)
                 currentJournal
             }
 
@@ -458,6 +471,7 @@ class DrivingService : Service() {
                 try {
                     journal.split()
                     Log.i("DrivingService", "Journal ${journal.tripId} split at segment ${journal.segmentCount}")
+                    ActivityLog.log("journal_split", journal.tripId, "segment" to journal.segmentCount.toString())
                 } catch (e: Exception) {
                     Log.e("DrivingService", "Segment split failed", e)
                 }
@@ -511,6 +525,7 @@ class DrivingService : Service() {
                     }
                     if (device == null) {
                         Log.d("DrivingService", "OBD adapter '${settings.obdDeviceName}' not found; will retry")
+                        ActivityLog.log("obd_timeout", settings.obdDeviceName, "reason" to "not found")
                         DrivingStatus.obdLink.value = ObdLinkState.TIMED_OUT
                         delay(backoffMs)
                         backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
@@ -520,12 +535,14 @@ class DrivingService : Service() {
                     client.connect()
                     DrivingStatus.isObdConnected.value = true
                     DrivingStatus.obdLink.value = ObdLinkState.CONNECTED
+                    ActivityLog.log("obd_connected", settings.obdDeviceName)
                     DrivingStatus.obdStatusText.value = null
                     backoffMs = 2_000L
                     pollLoop(client, settings)
                 } catch (e: Exception) {
                     if (isActive) {
                         Log.w("DrivingService", "OBD connection lost: ${e.message}")
+                        ActivityLog.log("obd_lost", e.message ?: "error")
                         DrivingStatus.obdLink.value = ObdLinkState.TIMED_OUT
                         delay(backoffMs)
                         backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
@@ -656,15 +673,19 @@ class DrivingService : Service() {
         val settings = settingsSnapshot()
 
         // "Discard trips with fewer than N entries": journals below the
-        // threshold skip post-processing and are deleted instead of archived
-        // (also keeps test runs out of the real history when set high).
+        // threshold skip post-processing and go to failed/ with a reason
+        // (visible in the Trips tab, clearable) instead of vanishing - this
+        // also keeps test runs out of the real history when set high. Truly
+        // empty journals are still deleted outright (they were never trips).
         if (settings.discardBelowEntries > 0) {
             val entries = runCatching { trip.entryCount() }.getOrDefault(Int.MAX_VALUE)
             if (entries < settings.discardBelowEntries) {
                 Log.i("DrivingService", "Discarding trip ${trip.name}: $entries entries < ${settings.discardBelowEntries}")
                 if (relocate) {
-                    runCatching { store.delete(trip) }
-                        .onFailure { Log.e("DrivingService", "Could not delete discarded trip ${trip.name}", it) }
+                    runCatching { trip.mergeProps(mapOf("status_reason" to "discarded: $entries entries below threshold")) }
+                    runCatching { store.relocate(trip, toArchive = false) }
+                        .onFailure { Log.e("DrivingService", "Could not move discarded trip ${trip.name} to failed", it) }
+                    ActivityLog.log("trip_discarded", trip.name, "entries" to entries.toString(), "threshold" to settings.discardBelowEntries.toString())
                     toast(getString(R.string.toast_trip_discarded, entries, settings.discardBelowEntries))
                 }
                 return FinalizeResult.Skipped("below minimum entry threshold")
@@ -685,7 +706,8 @@ class DrivingService : Service() {
                 pidHexes = settings.obdSelectedPids,
                 generateKmz = settings.generateKmz,
                 saveOds = settings.saveOds,
-                usUnits = settings.usUnits
+                usUnits = settings.usUnits,
+                appVersion = BuildConfig.VERSION_CODE
             ),
             kmzStorage,
             odsStorage,
@@ -694,10 +716,19 @@ class DrivingService : Service() {
         when (result) {
             is FinalizeResult.Completed -> {
                 Log.i("DrivingService", "Trip ${result.label} converted (ods=${result.wroteOds} kmz=${result.kmzDayLabel})")
+                ActivityLog.log("trip_converted", result.label, "kmz" to (result.kmzDayLabel ?: "-"), "ods" to result.wroteOds.toString())
                 if (relocate) {
                     runCatching { store.relocate(trip, toArchive = true) }
                         .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to archive", it) }
                     toast(getString(R.string.toast_trip_complete))
+                    if (settings.placeNameLookups && settings.gpsEnabled) {
+                        // Fire-and-forget Nominatim resolution (policy-compliant,
+                        // failures leave the coordinates as the display fallback)
+                        val name = trip.name
+                        serviceScope.launch {
+                            runCatching { TripsRepository(this@DrivingService).lookUpPlaces(name) }
+                        }
+                    }
                 }
             }
             is FinalizeResult.Skipped -> {
@@ -706,7 +737,9 @@ class DrivingService : Service() {
             }
             is FinalizeResult.Failed -> {
                 Log.e("DrivingService", "Trip ${trip.name} conversion failed", result.error)
+                ActivityLog.log("trip_failed", trip.name, "error" to (result.error.message ?: "unknown"))
                 if (relocate) {
+                    runCatching { trip.mergeProps(mapOf("status_reason" to (result.error.message ?: "conversion failed"))) }
                     runCatching { store.relocate(trip, toArchive = false) }
                         .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to failed", it) }
                 }
@@ -730,6 +763,7 @@ class DrivingService : Service() {
                 for (trip in store.unfinishedTrips()) {
                     if (synchronized(journalLock) { currentJournal?.tripId } == trip.name) continue
                     Log.i("DrivingService", "Recovering unfinished trip ${trip.name}")
+                    ActivityLog.log("trip_recovered", trip.name)
                     try {
                         finalizeTrip(store, trip)
                     } catch (e: Exception) {
@@ -781,6 +815,7 @@ class DrivingService : Service() {
                 }
             }
             toast(getString(R.string.toast_rebuild_done, rebuilt))
+            ActivityLog.log("rebuild_run", "$rebuilt trips re-converted")
         }
     }
 }

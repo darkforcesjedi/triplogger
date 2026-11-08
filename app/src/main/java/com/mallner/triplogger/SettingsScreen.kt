@@ -147,6 +147,13 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            ToggleRow(
+                label = stringResource(R.string.settings_place_lookups),
+                caption = stringResource(R.string.settings_place_lookups_caption),
+                checked = appSettings.placeNameLookups,
+                onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updatePlaceNameLookups(on) } }
+            )
         }
 
         // -------------------------------------------------------------- OBD-II

@@ -36,6 +36,8 @@ data class AppSettings(
     val odsLocationUri: String = "",
     /** Display/export units: true = US customary (mph, °F, psi), false = metric */
     val usUnits: Boolean = true,
+    /** Look up trip start/end placenames (and timezone name) via Nominatim */
+    val placeNameLookups: Boolean = true,
     /** Delete archived trip journals older than N days (0 = keep forever) */
     val archiveRetentionDays: Int = 0,
     /** Delete archived trip journals shorter than N seconds (0 = keep all) */
@@ -71,6 +73,7 @@ object AppSettingsKeys {
     val KMZ_LOCATION_URI = stringPreferencesKey("kmz_location_uri")
     val ODS_LOCATION_URI = stringPreferencesKey("ods_location_uri")
     val US_UNITS = booleanPreferencesKey("us_units")
+    val PLACE_NAME_LOOKUPS = booleanPreferencesKey("place_name_lookups")
     val ARCHIVE_RETENTION_DAYS = intPreferencesKey("archive_retention_days")
     val ARCHIVE_MIN_TRIP_SEC = intPreferencesKey("archive_min_trip_sec")
     val DISCARD_BELOW_ENTRIES = intPreferencesKey("discard_below_entries")
@@ -195,6 +198,12 @@ class AppSettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun updatePlaceNameLookups(enabled: Boolean) {
+        context.dataStore.edit {
+            it[AppSettingsKeys.PLACE_NAME_LOOKUPS] = enabled
+        }
+    }
+
     suspend fun updateArchiveRetentionDays(days: Int) {
         context.dataStore.edit {
             it[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] = days.coerceIn(0, 3650)
@@ -260,6 +269,7 @@ class AppSettingsRepository(private val context: Context) {
         val kmzLocationUri = preferences[AppSettingsKeys.KMZ_LOCATION_URI] ?: ""
         val odsLocationUri = preferences[AppSettingsKeys.ODS_LOCATION_URI] ?: ""
         val usUnits = preferences[AppSettingsKeys.US_UNITS] ?: true
+        val placeNameLookups = preferences[AppSettingsKeys.PLACE_NAME_LOOKUPS] ?: true
         val archiveRetentionDays = preferences[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] ?: 0
         val archiveMinTripSec = preferences[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] ?: 0
         val discardBelowEntries = preferences[AppSettingsKeys.DISCARD_BELOW_ENTRIES] ?: 0
@@ -271,7 +281,7 @@ class AppSettingsRepository(private val context: Context) {
         return AppSettings(
             bluetoothDeviceName, loggingFrequency, splitEnabled, maxSegmentSizeKb, forceLogging, storageLocationUri, serviceEnabled,
             gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
-            tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, archiveRetentionDays, archiveMinTripSec,
+            tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, placeNameLookups, archiveRetentionDays, archiveMinTripSec,
             discardBelowEntries,
             showHybridCharge, showFuelLevel, speedGaugeMaxUs, speedGaugeMaxMetric, rpmGaugeMax
         )

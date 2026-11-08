@@ -261,7 +261,10 @@ class AppSettingsRepository(private val context: Context) {
         val obdDeviceName = preferences[AppSettingsKeys.OBD_DEVICE_NAME] ?: ""
         val obdPollIntervalMs = preferences[AppSettingsKeys.OBD_POLL_INTERVAL_MS] ?: 1000
         val obdSelectedPids = preferences[AppSettingsKeys.OBD_SELECTED_PIDS]
-            ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?.split(',')
+            ?.map { it.trim().uppercase() }
+            ?.filter { it.isNotEmpty() && ObdPids.byHex(it) != null } // drops stale/unknown codes
+            ?.distinct()
             ?: ObdPids.DEFAULTS
         val generateKmz = preferences[AppSettingsKeys.GENERATE_KMZ] ?: true
         val saveOds = preferences[AppSettingsKeys.SAVE_ODS] ?: false

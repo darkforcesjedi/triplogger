@@ -47,6 +47,9 @@ class AppNotificationManager(private val context: Context) {
     companion object {
         const val NOTIFICATION_ID = 1
 
+        /** Batch jobs (rebuild from archive, bulk placename lookup). */
+        const val PROGRESS_NOTIFICATION_ID = 2
+
         // Notification.EXTRA_REQUEST_PROMOTED_ONGOING; requested via extras so the
         // project does not need a QPR (API 36.1) NotificationCompat dependency.
         private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
@@ -153,6 +156,36 @@ class AppNotificationManager(private val context: Context) {
 
     fun notify(id: Int, notification: Notification) {
         notificationManager.notify(id, notification)
+    }
+
+    // ------------------------------------------------------------- progress
+
+    private var progressBuilder: NotificationCompat.Builder? = null
+
+    /**
+     * Show (or update) the ongoing batch-job progress notification, e.g.
+     * title "Rebuilding Logs", text "3 / 12 Generating KMZ+ODS".
+     */
+    @Synchronized
+    fun showProgress(title: String, text: String, max: Int, progress: Int) {
+        val builder = progressBuilder ?: NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .also { progressBuilder = it }
+        builder
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setProgress(max, progress, false)
+        notificationManager.notify(PROGRESS_NOTIFICATION_ID, builder.build())
+    }
+
+    @Synchronized
+    fun cancelProgress() {
+        notificationManager.cancel(PROGRESS_NOTIFICATION_ID)
+        progressBuilder = null
     }
 
     fun cancelNotification() {

@@ -25,6 +25,7 @@
     <string name="action_save">Save</string>
     <string name="action_close">Close</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_continue">Continue</string>
     <string name="not_set">Not set</string>
 
     <!-- Permissions (Home) -->
@@ -186,7 +187,7 @@
     <string name="trips_start">Start</string>
     <string name="trips_end">End</string>
     <string name="trips_outputs">Outputs</string>
-    <string name="trips_logged_with">Logged with app v%1$d · re-run to refresh stats</string>
+    <string name="trips_logged_with">Logged with app %1$s</string>
     <string name="trips_stat_distance">Distance</string>
     <string name="trips_stat_duration">Duration</string>
     <string name="trips_stat_max">Max speed</string>
@@ -199,6 +200,19 @@
     <string name="activity_title">Activity</string>
     <string name="activity_share">Share diagnostics</string>
     <string name="activity_empty">Nothing logged yet — events appear here as trips start, end, convert, and as the OBD adapter comes and goes.</string>
+
+    <!-- Batch jobs (progress notification + confirmations) -->
+    <string name="settings_rebuild_confirm">Re-generating output may take a while. Continue?</string>
+    <string name="settings_apply_lookups">Apply to archived trips</string>
+    <string name="settings_apply_lookups_confirm">Placename lookups are rate-limited. This may take a while.</string>
+    <string name="settings_apply_lookups_all">Refresh all</string>
+    <string name="settings_apply_lookups_untagged">Untagged trips only</string>
+    <string name="progress_rebuilding">Rebuilding Logs</string>
+    <string name="progress_rebuild_text">%1$d / %2$d Generating %3$s</string>
+    <string name="progress_lookup_title">Looking Up Placenames</string>
+    <string name="progress_lookup_text">%1$d / %2$d · %3$s</string>
+    <string name="progress_lookup_done">%1$d / %2$d</string>
+    <string name="toast_lookup_done">Placenames updated for %1$d trips.</string>
     <string name="activity_event_trip_started">Trip started</string>
     <string name="activity_event_trip_ended">Trip ended</string>
     <string name="activity_event_trip_converted">Converted</string>
@@ -214,6 +228,7 @@
     <string name="activity_event_obd_timeout">OBD timeout</string>
     <string name="activity_event_journal_split">Journal split</string>
     <string name="activity_event_rebuild_run">Rebuild from archive</string>
+    <string name="activity_event_places_lookup_all">Placename lookups</string>
     <string name="activity_event_failed_cleared">Failed section cleared</string>
 
     <plurals name="notification_entries">

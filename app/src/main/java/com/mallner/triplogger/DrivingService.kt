@@ -42,6 +42,8 @@ class DrivingService : Service() {
         const val ACTION_STOP_SERVICE = "STOP_SERVICE"
         const val ACTION_NEW_TRIP = "NEW_TRIP"
         const val ACTION_REBUILD_LOGS = "REBUILD_LOGS"
+        const val ACTION_LOOKUP_PLACES = "LOOKUP_PLACES"
+        const val EXTRA_LOOKUPS_UNTAGGED_ONLY = "untagged_only"
     }
 
     private lateinit var appSettingsRepository: AppSettingsRepository
@@ -192,6 +194,10 @@ class DrivingService : Service() {
             // "Rebuild logs from archive": one-shot re-conversion, works even
             // when the logging service is otherwise disabled.
             rebuildFromArchive()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_LOOKUP_PLACES) {
+            lookupPlacesForArchive(intent.getBooleanExtra(EXTRA_LOOKUPS_UNTAGGED_ONLY, false))
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP_SERVICE) {
@@ -707,7 +713,7 @@ class DrivingService : Service() {
                 generateKmz = settings.generateKmz,
                 saveOds = settings.saveOds,
                 usUnits = settings.usUnits,
-                appVersion = BuildConfig.VERSION_CODE
+                appVersionName = BuildConfig.VERSION_NAME
             ),
             kmzStorage,
             odsStorage,
@@ -806,16 +812,53 @@ class DrivingService : Service() {
                 toast(getString(R.string.toast_rebuild_no_temp))
                 return@launch
             }
+            val trips = store.archivedTrips()
+            val settings = settingsSnapshot()
+            val formats = listOfNotNull(
+                "KMZ".takeIf { settings.generateKmz },
+                "ODS".takeIf { settings.saveOds }
+            ).joinToString("+").ifEmpty { "KMZ+ODS" }
             var rebuilt = 0
-            for (trip in store.archivedTrips()) {
-                try {
-                    if (finalizeTrip(store, trip, relocate = false) is FinalizeResult.Completed) rebuilt++
-                } catch (e: Exception) {
-                    Log.e("DrivingService", "Rebuild failed for ${trip.name}", e)
+            try {
+                trips.forEachIndexed { index, trip ->
+                    notificationManager.showProgress(
+                        getString(R.string.progress_rebuilding),
+                        getString(R.string.progress_rebuild_text, index + 1, trips.size, formats),
+                        trips.size,
+                        index + 1
+                    )
+                    try {
+                        if (finalizeTrip(store, trip, relocate = false) is FinalizeResult.Completed) rebuilt++
+                    } catch (e: Exception) {
+                        Log.e("DrivingService", "Rebuild failed for ${trip.name}", e)
+                    }
                 }
+            } finally {
+                notificationManager.cancelProgress()
             }
             toast(getString(R.string.toast_rebuild_done, rebuilt))
             ActivityLog.log("rebuild_run", "$rebuilt trips re-converted")
+        }
+    }
+
+    /** Bulk placename resolution over archived trips (see Settings). */
+    private fun lookupPlacesForArchive(untaggedOnly: Boolean) {
+        serviceScope.launch {
+            val repository = TripsRepository(this@DrivingService)
+            try {
+                val resolved = repository.lookUpAll(untaggedOnly) { done, total, label ->
+                    notificationManager.showProgress(
+                        getString(R.string.progress_lookup_title),
+                        if (label.isEmpty()) getString(R.string.progress_lookup_done, done, total)
+                        else getString(R.string.progress_lookup_text, done, total, label),
+                        total,
+                        done
+                    )
+                }
+                toast(getString(R.string.toast_lookup_done, resolved))
+            } finally {
+                notificationManager.cancelProgress()
+            }
         }
     }
 }

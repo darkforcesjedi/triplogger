@@ -57,7 +57,7 @@ class TripsMetadataTest {
         val kmzDir = tmp.newFolder("kmz")
         val result = TripFinalizer.finalize(
             trip,
-            FinalizeSettings(listOf("0C", "0D"), generateKmz = true, saveOds = true, appVersion = 2),
+            FinalizeSettings(listOf("0C", "0D"), generateKmz = true, saveOds = true, appVersionName = "9.9-test"),
             DirStorage(kmzDir),
             DirStorage(tmp.newFolder("ods")),
             FakePlotRenderer
@@ -66,7 +66,7 @@ class TripsMetadataTest {
 
         assertTrue(trip.isConverted())
         assertTrue(trip.endMs() > trip.startMs())
-        assertEquals(2, trip.appVersion())
+        assertEquals("9.9-test", trip.appVersionName())
         assertEquals(10, trip.readProps()["entries"]?.toInt())
         assertTrue("distance stored", trip.distanceM() > 100)
         assertEquals(12.5f, trip.maxSpeedMps(), 0.01f)

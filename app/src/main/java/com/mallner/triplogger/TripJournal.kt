@@ -243,7 +243,7 @@ abstract class OrphanTrip(val name: String) {
     fun distanceM(): Double = readProps()["distance_m"]?.toDoubleOrNull() ?: Double.NaN
     fun maxSpeedMps(): Float = readProps()["max_speed_mps"]?.toFloatOrNull() ?: Float.NaN
     fun segmentsCount(): Int = readProps()["segments"]?.toIntOrNull() ?: 0
-    fun appVersion(): Int = readProps()["app_version"]?.toIntOrNull() ?: 0
+    fun appVersionName(): String? = readProps()["app_version"]?.takeIf { it.isNotEmpty() }
     fun isConverted(): Boolean = readProps()["converted"] == "1"
     fun convertedAtMs(): Long = readProps()["converted_at"]?.toLongOrNull() ?: 0L
     fun kmzDay(): String? = readProps()["kmz_day"]?.takeIf { it.isNotEmpty() }

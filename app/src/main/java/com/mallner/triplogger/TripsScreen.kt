@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
@@ -152,7 +153,6 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
                 trip = trip,
                 usUnits = appSettings.usUnits,
                 busy = busy == trip.name,
-                lookupEnabled = true,
                 onRename = { editingTitle = trip },
                 onRerun = {
                     busy = trip.name; message = null
@@ -308,38 +308,52 @@ private fun Badge(text: String) {
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TripDetail(
     trip: TripEntry,
     usUnits: Boolean,
     busy: Boolean,
-    lookupEnabled: Boolean,
     onRename: () -> Unit,
     onRerun: () -> Unit,
     onDiscard: () -> Unit,
     onLookUp: () -> Unit
 ) {
+    val context = LocalContext.current
+    val repository = remember { TripsRepository(context) }
+    var coords by remember(trip.name) {
+        mutableStateOf<Pair<Pair<Double, Double>?, Pair<Double, Double>?>?>(null)
+    }
+    LaunchedEffect(trip.name) { coords = repository.endpoints(trip.name) }
+
     val timeFmt = SimpleDateFormat("MMM d, h:mm:ss a", Locale.getDefault())
-    val tz = trip.tzName ?: trip.tzId
+    val tz = trip.tzAbbrev
+    val hasPlaces = trip.placeStart != null || trip.placeEnd != null
+
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(trip.displayTitle, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             IconButton(onClick = onRename) { Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.trips_rename_title)) }
         }
 
-        PlaceLine(
-            stringResource(R.string.trips_start),
-            trip.placeStart,
-            listOf(trip.startMs),
-            timeFmt, tz,
-            trip.placeEnd == null && lookupEnabled // no places at all -> offer lookup on start line
-        ) { onLookUp() }
-        if (trip.placeStart != null || trip.placeEnd != null) {
-            PlaceLine(stringResource(R.string.trips_end), trip.placeEnd, listOf(trip.endMs), timeFmt, tz, false) {}
-        }
-        if (tz != null && trip.placeStart == null) {
-            Text(tz, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        EndPointLine(
+            label = stringResource(R.string.trips_start),
+            place = trip.placeStart,
+            coordinates = coords?.first?.let { formatCoordinates(it.first, it.second) },
+            time = trip.startMs.takeIf { it > 0 }?.let { timeFmt.format(Date(it)) },
+            tz = tz,
+            showLookup = !hasPlaces,
+            onLookUp = onLookUp
+        )
+        EndPointLine(
+            label = stringResource(R.string.trips_end),
+            place = trip.placeEnd,
+            coordinates = coords?.second?.let { formatCoordinates(it.first, it.second) },
+            time = trip.endMs.takeIf { it > 0 }?.let { timeFmt.format(Date(it)) },
+            tz = tz,
+            showLookup = false,
+            onLookUp = {}
+        )
 
         Spacer(Modifier.height(16.dp))
         DetailStatRow(
@@ -369,9 +383,9 @@ private fun TripDetail(
             val outputs = listOfNotNull(trip.kmzDay?.let { "$it.kmz" }, trip.odsFile)
             Text(outputs.joinToString(" · "), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (trip.appVersion > 0) {
+        trip.loggedWith?.let {
             Text(
-                stringResource(R.string.trips_logged_with, trip.appVersion),
+                stringResource(R.string.trips_logged_with, it),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -392,19 +406,49 @@ private fun TripDetail(
     }
 }
 
+private fun formatCoordinates(lat: Double, lon: Double): String =
+    "%.5f, %.5f".format(lat, lon)
+
+/**
+ * One Start/End row: prominent place name (coordinates until a lookup ran),
+ * subtle time + zone abbreviation beneath, optional Look-up button.
+ */
 @Composable
-private fun PlaceLine(label: String, place: String?, times: List<Long>, fmt: SimpleDateFormat, tz: String?, showLookup: Boolean, onLookUp: () -> Unit) {
-    val time = times.firstOrNull()?.takeIf { it > 0 }?.let { fmt.format(Date(it)) } ?: "—"
+private fun EndPointLine(
+    label: String,
+    place: String?,
+    coordinates: String?,
+    time: String?,
+    tz: String?,
+    showLookup: Boolean,
+    onLookUp: () -> Unit
+) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("$label  ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(place ?: time, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f, fill = false))
+            Text(
+                label,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(48.dp)
+            )
+            Text(
+                place ?: coordinates ?: "—",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
             if (showLookup) {
                 TextButton(onClick = onLookUp) { Text(stringResource(R.string.trips_lookup), fontSize = 12.sp) }
             }
         }
-        if (place != null) {
-            Text(time + (tz?.let { " · $it" } ?: ""), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(modifier = Modifier.padding(start = 48.dp)) {
+            Text(
+                listOfNotNull(time, tz).joinToString(" "),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

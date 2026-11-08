@@ -10,20 +10,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Divider
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
@@ -39,7 +40,6 @@ import java.util.Locale
 fun ActivityScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val events by ActivityLog.recent.collectAsState()
-    val timeFormat = remember { SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()) }
 
     Column(modifier = modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -66,32 +66,44 @@ fun ActivityScreen(modifier: Modifier = Modifier) {
             )
             return@Column
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             items(events, key = { "${it.timeMs}-${it.event}-${it.message}" }) { event ->
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                    Row {
-                        Text(
-                            timeFormat.format(Date(event.timeMs)),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(eventLabel(event.event), fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    }
-                    if (event.message.isNotEmpty()) {
-                        Text(event.message, fontSize = 12.sp)
-                    }
-                    if (event.fields.isNotEmpty()) {
-                        Text(
-                            event.fields.entries.joinToString("  ") { "${it.key}=${it.value}" },
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    colors = CardDefaults.cardColors()
+                ) {
+                    Row(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.width(110.dp)) {
+                            Text(
+                                SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(event.timeMs)),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(event.timeMs)),
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(eventLabel(event.event), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            if (event.message.isNotEmpty()) {
+                                Text(event.message, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (event.fields.isNotEmpty()) {
+                                Text(
+                                    event.fields.entries.joinToString("  ") { "${it.key}=${it.value}" },
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
-                Divider()
             }
         }
     }
@@ -110,6 +122,7 @@ private fun eventLabel(event: String): String {
         "trip_failed" -> R.string.activity_event_trip_failed
         "trip_renamed" -> R.string.activity_event_trip_renamed
         "places_resolved" -> R.string.activity_event_places_resolved
+        "places_lookup_all" -> R.string.activity_event_places_lookup_all
         "obd_connected" -> R.string.activity_event_obd_connected
         "obd_lost" -> R.string.activity_event_obd_lost
         "obd_timeout" -> R.string.activity_event_obd_timeout

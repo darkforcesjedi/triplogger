@@ -12,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -76,6 +77,8 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
     var showTriggerDialog by remember { mutableStateOf(false) }
     var showAdapterDialog by remember { mutableStateOf(false) }
     var showPidDialog by remember { mutableStateOf(false) }
+    var showRebuildConfirm by remember { mutableStateOf(false) }
+    var showLookupConfirm by remember { mutableStateOf(false) }
 
     val hasBluetoothPermission = remember {
         val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -154,6 +157,11 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                 checked = appSettings.placeNameLookups,
                 onCheckedChange = { on -> coroutineScope.launch { appSettingsRepository.updatePlaceNameLookups(on) } }
             )
+            if (appSettings.placeNameLookups) {
+                TextButton(onClick = { showLookupConfirm = true }) {
+                    Text(stringResource(R.string.settings_apply_lookups))
+                }
+            }
         }
 
         // -------------------------------------------------------------- OBD-II
@@ -325,11 +333,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
         Button(
             enabled = appSettings.tempLocationUri.isNotEmpty() &&
                 (appSettings.generateKmz || appSettings.saveOds),
-            onClick = {
-                context.startService(
-                    Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_REBUILD_LOGS }
-                )
-            }
+            onClick = { showRebuildConfirm = true }
         ) {
             Text(stringResource(R.string.settings_rebuild))
         }
@@ -340,6 +344,57 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             modifier = Modifier.padding(top = 4.dp)
         )
         Spacer(modifier = Modifier.height(24.dp))
+    }
+
+    // ------------------------------------------------- batch job confirmations
+    if (showRebuildConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRebuildConfirm = false },
+            title = { Text(stringResource(R.string.settings_rebuild)) },
+            text = { Text(stringResource(R.string.settings_rebuild_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRebuildConfirm = false
+                    context.startService(
+                        Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_REBUILD_LOGS }
+                    )
+                }) { Text(stringResource(R.string.action_continue)) }
+            },
+            dismissButton = { TextButton(onClick = { showRebuildConfirm = false }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
+
+    if (showLookupConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLookupConfirm = false },
+            title = { Text(stringResource(R.string.settings_apply_lookups)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.settings_apply_lookups_confirm))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = {
+                            showLookupConfirm = false
+                            context.startService(
+                                Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_LOOKUP_PLACES }
+                            )
+                        }) { Text(stringResource(R.string.settings_apply_lookups_all)) }
+                        TextButton(onClick = {
+                            showLookupConfirm = false
+                            context.startService(
+                                Intent(context, DrivingService::class.java)
+                                    .apply {
+                                        action = DrivingService.ACTION_LOOKUP_PLACES
+                                        putExtra(DrivingService.EXTRA_LOOKUPS_UNTAGGED_ONLY, true)
+                                    }
+                            )
+                        }) { Text(stringResource(R.string.settings_apply_lookups_untagged)) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showLookupConfirm = false }) { Text(stringResource(R.string.action_cancel)) } }
+        )
     }
 
     if (showTriggerDialog) {

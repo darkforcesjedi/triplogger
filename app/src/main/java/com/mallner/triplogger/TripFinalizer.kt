@@ -21,8 +21,8 @@ data class FinalizeSettings(
     val saveOds: Boolean,
     /** Convert speed/temperature/pressure/distance outputs to US customary. */
     val usUnits: Boolean = true,
-    /** Written into trip.properties at conversion (metadata-schema versioning). */
-    val appVersion: Int = 0
+    /** Written into trip.properties at conversion: user-facing app version. */
+    val appVersionName: String = ""
 )
 
 sealed class FinalizeResult {
@@ -107,7 +107,7 @@ object TripFinalizer {
                     mapOf(
                         "converted" to "1",
                         "converted_at" to System.currentTimeMillis().toString(),
-                        "app_version" to settings.appVersion.toString(),
+                        "app_version" to settings.appVersionName,
                         "end_ms" to endMs.toString(),
                         "entries" to entries.toString(),
                         "distance_m" to if (distanceM.isNaN()) null else "%.1f".format(distanceM),

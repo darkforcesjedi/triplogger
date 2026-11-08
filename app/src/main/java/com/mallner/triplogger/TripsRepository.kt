@@ -47,12 +47,28 @@ data class TripEntry(
     val kmzDay: String?,
     val odsFile: String?,
     val statusReason: String?,
-    val appVersion: Int
+    val appVersionName: String?
 ) {
     val durationMs: Long get() = if (endMs > startMs) endMs - startMs else 0L
     val displayTitle: String
         get() = title?.takeIf { it.isNotBlank() }
             ?: if (startMs > 0) SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(startMs)) else name
+
+    /** Zone abbreviation for display ("EDT"), derived from the recorded zone. */
+    val tzAbbrev: String?
+        get() = (tzName ?: tzId)?.let { id ->
+            runCatching {
+                val tz = java.util.TimeZone.getTimeZone(id)
+                tz.getDisplayName(
+                    tz.useDaylightTime() && tz.inDaylightTime(Date(startMs)),
+                    java.util.TimeZone.SHORT,
+                    Locale.US
+                )
+            }.getOrNull()
+        }
+
+    /** Version name; numeric values are the interim versionCode field (pre-1.2). */
+    val loggedWith: String? = appVersionName?.takeUnless { it.all(Char::isDigit) }
 }
 
 /**
@@ -98,7 +114,7 @@ class TripsRepository(private val context: Context) {
             kmzDay = trip.kmzDay(),
             odsFile = trip.odsFile(),
             statusReason = trip.statusReason(),
-            appVersion = trip.appVersion()
+            appVersionName = trip.appVersionName()
         )
     }
 
@@ -169,7 +185,7 @@ class TripsRepository(private val context: Context) {
                     generateKmz = settings.generateKmz,
                     saveOds = settings.saveOds,
                     usUnits = settings.usUnits,
-                    appVersion = BuildConfig.VERSION_CODE
+                    appVersionName = BuildConfig.VERSION_NAME
                 ),
                 kmzStorage,
                 odsStorage,
@@ -213,22 +229,64 @@ class TripsRepository(private val context: Context) {
             val store = Storage.journalStore(context, settings)
                 ?: error("Temporary storage unavailable")
             val trip = findTrip(store, tripName) ?: error("Trip $tripName not found")
-            val points = trip.readGpsRows().filter { !it.latitude.isNaN() && !it.longitude.isNaN() && it.latitude != 0.0 }
-            val start = points.firstOrNull() ?: error("No positions recorded")
-            val end = points.last()
-
-            val startPlace = NominatimClient.lookup(start.latitude, start.longitude) ?: error("Lookup failed")
-            Thread.sleep(NominatimClient.POLICY_DELAY_MS)
-            val endPlace = NominatimClient.lookup(end.latitude, end.longitude) ?: startPlace
-
-            val updates = linkedMapOf(
-                "place_start" to startPlace.name,
-                "place_end" to endPlace.name
-            )
-            startPlace.timezone?.let { updates["tz_name"] = it }
-            trip.mergeProps(updates)
-            ActivityLog.log("places_resolved", tripName, "start" to (startPlace.name ?: ""))
+            if (!resolvePlaces(store, trip)) error("Lookup failed")
         }
+    }
+
+    /**
+     * Bulk placename resolution across archived trips ("Apply to archived
+     * trips"). [untaggedOnly] skips trips that already have a placename;
+     * progress reports per trip. Nominatim rate limits apply - two requests
+     * per trip at one per second, hence "this may take a while".
+     */
+    suspend fun lookUpAll(untaggedOnly: Boolean, onProgress: (Int, Int, String) -> Unit): Int =
+        withContext(Dispatchers.IO) {
+            val settings = snapshot()
+            val store = Storage.journalStore(context, settings) ?: return@withContext 0
+            val trips = store.archivedTrips()
+                .filter { !untaggedOnly || it.placeStart().isNullOrEmpty() }
+            var done = 0
+            var resolved = 0
+            for (trip in trips) {
+                val label = trip.title() ?: trip.name
+                onProgress(done, trips.size, label)
+                runCatching { if (resolvePlaces(store, trip)) resolved++ }
+                done++
+            }
+            onProgress(done, trips.size, "")
+            ActivityLog.log("places_lookup_all", "$resolved/${trips.size} trips", "scope" to if (untaggedOnly) "untagged" else "all")
+            resolved
+        }
+
+    /** Start/end coordinates (for the detail sheet) of a trip, if recorded. */
+    suspend fun endpoints(tripName: String): Pair<Pair<Double, Double>?, Pair<Double, Double>?> =
+        withContext(Dispatchers.IO) {
+            val settings = snapshot()
+            val store = Storage.journalStore(context, settings) ?: return@withContext null to null
+            val trip = findTrip(store, tripName) ?: return@withContext null to null
+            val points = trip.readGpsRows().filter { !it.latitude.isNaN() && !it.longitude.isNaN() && it.latitude != 0.0 }
+            points.firstOrNull()?.let { Pair(it.latitude, it.longitude) } to
+                points.lastOrNull()?.let { Pair(it.latitude, it.longitude) }
+        }
+
+    /** Two Nominatim calls (start & end, policy-delayed) + metadata persist. */
+    private fun resolvePlaces(store: JournalStore, trip: OrphanTrip): Boolean {
+        val points = trip.readGpsRows().filter { !it.latitude.isNaN() && !it.longitude.isNaN() && it.latitude != 0.0 }
+        val start = points.firstOrNull() ?: return false
+        val end = points.last()
+
+        val startPlace = NominatimClient.lookup(start.latitude, start.longitude) ?: return false
+        Thread.sleep(NominatimClient.POLICY_DELAY_MS)
+        val endPlace = NominatimClient.lookup(end.latitude, end.longitude) ?: startPlace
+
+        val updates = linkedMapOf(
+            "place_start" to startPlace.name,
+            "place_end" to endPlace.name
+        )
+        startPlace.timezone?.let { updates["tz_name"] = it }
+        trip.mergeProps(updates)
+        ActivityLog.log("places_resolved", trip.name, "start" to (startPlace.name ?: ""))
+        return true
     }
 
     private fun findTrip(store: JournalStore, name: String): OrphanTrip? =

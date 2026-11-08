@@ -1,0 +1,7 @@
+# never commit secrets or build state on this branch
+keystore.properties
+local.properties
+.gradle/
+.idea/
+app/
+*.tmp

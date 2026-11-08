@@ -1,0 +1,28 @@
+# Release artifacts
+
+Prebuilt release APKs, signed with the project maintainer's own key.
+Verify with `sha256sum -c SHA256SUMS.txt`.
+
+Download the latest:
+
+    https://github.com/darkforcesjedi/triplogger/raw/releases/DrivingTripLogger-v1.2.apk
+
+v1.2 - built from master at 8f41c7e, minSdk 24 (Android 7.0+).
+
+- Trips tab: metadata-backed history (distance, max speed, entries,
+  trigger, KMZ/ODS badges), day sections, unfinished + failed/discarded
+  sections; detail sheet renames trips (propagated into the KMZ
+  placemark), re-runs post-processing, discards, and clears failed.
+- Activity tab: rolling event log with share-diagnostics export.
+- POI-level placenames via OpenStreetMap Nominatim (opt-in), start/end
+  lines open in OpenStreetMap, coordinates never rounded.
+- Rebuild-from-archive and bulk placename lookups confirm and show a
+  progress notification.
+- Stable epoch-based KMZ track ids; DST-proof, rename-safe.
+
+v1.1 - built from master at cb960b6. Live Update trip notification with
+Samsung Now bar support, status chip, discard-below-entries setting,
+ELM327 late-reply hardening.
+
+v1.0 (initial release) - built from master at b86c338. Install over the
+debug build after uninstalling it (different signing key).

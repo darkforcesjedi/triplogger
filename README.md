@@ -13,7 +13,7 @@ If you have a v1.0/v1.1 build installed (older key), uninstall it first —
 Android refuses an update signed by a different key. All future releases use
 the new key.
 
-v1.2 - built from master at 8f41c7e, minSdk 24 (Android 7.0+).
+v1.2 - built from master at 65cca79, minSdk 24 (Android 7.0+).
 
 - Trips tab: metadata-backed history (distance, max speed, entries,
   trigger, KMZ/ODS badges), day sections, unfinished + failed/discarded
@@ -26,9 +26,9 @@ v1.2 - built from master at 8f41c7e, minSdk 24 (Android 7.0+).
   progress notification.
 - Stable epoch-based KMZ track ids; DST-proof, rename-safe.
 
-v1.1 - built from master at cb960b6. Live Update trip notification with
+v1.1 - built from master at a37facb. Live Update trip notification with
 Samsung Now bar support, status chip, discard-below-entries setting,
 ELM327 late-reply hardening.
 
-v1.0 (initial release) - built from master at b86c338. Install over the
+v1.0 (initial release) - built from master at 95b2401. Install over the
 debug build after uninstalling it (different signing key).

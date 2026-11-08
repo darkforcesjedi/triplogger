@@ -353,14 +353,14 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             title = { Text(stringResource(R.string.settings_rebuild)) },
             text = { Text(stringResource(R.string.settings_rebuild_confirm)) },
             confirmButton = {
-                TextButton(onClick = {
+                DialogActionButton(stringResource(R.string.action_continue)) {
                     showRebuildConfirm = false
                     context.startService(
                         Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_REBUILD_LOGS }
                     )
-                }) { Text(stringResource(R.string.action_continue)) }
+                }
             },
-            dismissButton = { TextButton(onClick = { showRebuildConfirm = false }) { Text(stringResource(R.string.action_cancel)) } }
+            dismissButton = { DialogActionButton(stringResource(R.string.action_cancel)) { showRebuildConfirm = false } }
         )
     }
 
@@ -368,32 +368,28 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
         AlertDialog(
             onDismissRequest = { showLookupConfirm = false },
             title = { Text(stringResource(R.string.settings_apply_lookups)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.settings_apply_lookups_confirm))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = {
-                            showLookupConfirm = false
-                            context.startService(
-                                Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_LOOKUP_PLACES }
-                            )
-                        }) { Text(stringResource(R.string.settings_apply_lookups_all)) }
-                        TextButton(onClick = {
-                            showLookupConfirm = false
-                            context.startService(
-                                Intent(context, DrivingService::class.java)
-                                    .apply {
-                                        action = DrivingService.ACTION_LOOKUP_PLACES
-                                        putExtra(DrivingService.EXTRA_LOOKUPS_UNTAGGED_ONLY, true)
-                                    }
-                            )
-                        }) { Text(stringResource(R.string.settings_apply_lookups_untagged)) }
+            text = { Text(stringResource(R.string.settings_apply_lookups_confirm)) },
+            confirmButton = {
+                Row {
+                    DialogActionButton(stringResource(R.string.settings_apply_lookups_all)) {
+                        showLookupConfirm = false
+                        context.startService(
+                            Intent(context, DrivingService::class.java).apply { action = DrivingService.ACTION_LOOKUP_PLACES }
+                        )
                     }
+                    DialogActionButton(stringResource(R.string.settings_apply_lookups_untagged)) {
+                        showLookupConfirm = false
+                        context.startService(
+                            Intent(context, DrivingService::class.java)
+                                .apply {
+                                    action = DrivingService.ACTION_LOOKUP_PLACES
+                                    putExtra(DrivingService.EXTRA_LOOKUPS_UNTAGGED_ONLY, true)
+                                }
+                        )
+                    }
+                    DialogActionButton(stringResource(R.string.action_cancel)) { showLookupConfirm = false }
                 }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showLookupConfirm = false }) { Text(stringResource(R.string.action_cancel)) } }
+            }
         )
     }
 

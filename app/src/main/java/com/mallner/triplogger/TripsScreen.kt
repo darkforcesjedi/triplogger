@@ -197,22 +197,22 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
             title = { Text(stringResource(R.string.trips_rename_title)) },
             text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, label = { Text(stringResource(R.string.trips_rename_hint)) }) },
             confirmButton = {
-                TextButton(onClick = {
+                DialogActionButton(stringResource(R.string.trips_rename_apply)) {
                     coroutineScope.launch {
                         repository.setTitle(trip, text.trim().takeIf { t -> t.isNotEmpty() })
                         editingTitle = null
                         entries = repository.load()
                     }
-                }) { Text(stringResource(R.string.trips_rename_apply)) }
+                }
             },
             dismissButton = {
-                TextButton(onClick = {
+                DialogActionButton(stringResource(R.string.trips_rename_clear)) {
                     coroutineScope.launch {
                         repository.setTitle(trip, null)
                         editingTitle = null
                         entries = repository.load()
                     }
-                }) { Text(stringResource(R.string.trips_rename_clear)) }
+                }
             }
         )
     }
@@ -223,15 +223,15 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
             title = { Text(stringResource(R.string.trips_clear_failed)) },
             text = { Text(stringResource(R.string.trips_clear_failed_confirm)) },
             confirmButton = {
-                TextButton(onClick = {
+                DialogActionButton(stringResource(R.string.trips_clear_failed)) {
                     coroutineScope.launch {
                         repository.clearFailed()
                         confirmClearFailed = false
                         entries = repository.load()
                     }
-                }) { Text(stringResource(R.string.trips_clear_failed)) }
+                }
             },
-            dismissButton = { TextButton(onClick = { confirmClearFailed = false }) { Text(stringResource(android.R.string.cancel)) } }
+            dismissButton = { DialogActionButton(stringResource(R.string.action_cancel)) { confirmClearFailed = false } }
         )
     }
 }

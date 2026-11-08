@@ -18,3 +18,6 @@ local.properties
 keystore.properties
 *.jks
 *.keystore
+
+# machine-specific IDE state (device/AVD selection)
+/.idea/deploymentTargetSelector.xml

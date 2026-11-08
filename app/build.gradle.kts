@@ -12,12 +12,12 @@ android {
         version = release(36)
     }
 
-        // Release signing, secret-free at rest: keystore.properties (git-ignored)
+    // Release signing, secret-free at rest: keystore.properties (git-ignored)
     // stores only the NON-secret pointers (storeFile, keyAlias). The passwords
-    // are supplied per-invocation via TRIPLOGGER_STORE_PASSWORD /
-    // TRIPLOGGER_KEY_PASSWORD;
-    // without them assembleRelease produces an unsigned APK on purpose so
-    // anyone can build and sign with their own key.
+    // are supplied per-invocation via the TRIPLOGGER_STORE_PASSWORD /
+    // TRIPLOGGER_KEY_PASSWORD environment variables; without them
+    // assembleRelease produces an unsigned APK on purpose so anyone can
+    // build and sign with their own key.
     val keystoreProperties = Properties().apply {
         val f = rootProject.file("keystore.properties")
         if (f.exists()) f.inputStream().use { load(it) }
@@ -31,7 +31,7 @@ android {
                 storePassword = releaseStorePassword
                 keyAlias = keystoreProperties.getProperty("keyAlias", "triplogger")
                 keyPassword = System.getenv("TRIPLOGGER_KEY_PASSWORD").orEmpty()
-                    .ifEmpty { releaseStorePassword } // RETURN-at-generation alias
+                    .ifEmpty { releaseStorePassword } // key password defaults to the store password
             }
         }
     }

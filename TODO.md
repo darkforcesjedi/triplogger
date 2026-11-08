@@ -2,7 +2,7 @@
 
 Ideas queued for future iterations (not scoped/committed to yet).
 
-## Trips tab — IN PROGRESS (feat/trips-activity-tabs)
+## Trips tab — DONE (v1.2)
 
 Four-tab nav (Home / Trips / Activity / Settings). Rows render purely from
 trip.properties metadata (end_ms, entries, distance_m, max_speed_mps,
@@ -14,11 +14,11 @@ Discard moves journals to failed/ with a reason; "Clear failed" empties it;
 truly empty journals are still deleted. Detail sheet: rename, re-run,
 discard, look up, outputs list.
 
-Remaining before merge: field-test rename/rerun/lookup against real SAF
-folders, dark-theme polish of the detail sheet, day-section headers for the
-Activity tab.
+Remaining polish ideas: dark-theme pass on the detail sheet, day-section
+headers for the Activity tab, per-stop (dwell) journals for delivery/rideshare
+mileage with bulk stop resolution.
 
-## Activity log tab — IN PROGRESS (same branch)
+## Activity log tab — DONE (v1.2)
 
 Rolling JSONL (cap 500, app-private): trip started/ended/converted/
 recovered/discarded/failed/renamed, places resolved, OBD connected/lost/

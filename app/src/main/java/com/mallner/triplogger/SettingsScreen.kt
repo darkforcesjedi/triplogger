@@ -329,8 +329,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             supporting = stringResource(R.string.settings_min_trip_entries_support),
             onApply = { coroutineScope.launch { appSettingsRepository.updateDiscardBelowEntries(it) } }
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(
+        TextButton(
             enabled = appSettings.tempLocationUri.isNotEmpty() &&
                 (appSettings.generateKmz || appSettings.saveOds),
             onClick = { showRebuildConfirm = true }

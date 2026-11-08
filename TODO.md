@@ -58,6 +58,61 @@ OBD-absent) asserting the crawl no longer under-counts; store
 distance_algo = 1 so re-runs can distinguish old distance_m from
 multi-source output (leave legacy distance_m displayed until recomputed).
 
+## Trip metadata database (foundation for categories + multi-select)
+
+The Trips tab lists SAF folders and parses trip.properties per visible tile;
+that is why it slows down with a big archive. Keep trip metadata in one app
+database (Room or SQLiteOpenHelper): imported/reconciled from trip.properties
+during the storage scan and after each finalize, tiles render from the DB.
+trip.properties stays written as-is: it remains the crash-safe source of
+truth and the user-browsable record, the DB is a rebuildable index (delete
+DB rows on storage re-pick; rescan rebuilds).
+
+- Primary key = the epoch track id (t<start_ms>), stable across renames.
+- Track raw availability per trip: when a trip row exists but its journal
+  folder is gone from the temp store (user deleted/moved it), the tile shows
+  a "raw data not found" indicator and reprocess/re-run are disabled; the
+  converted KMZ/ODS outputs remain listed.
+
+## KMZ speed-plot PNG names should use the trip id
+
+Placemark images are named "<wall-clock label>.png" (e.g. "2026-11-05
+21.43.50 UTC-05:00.png"); that is the same collision class as the old
+wall-clock track ids (DST fold, rebuilt days). Name new/updated entries
+"t<start_ms>.png" matching the track id and write the <img src> to match.
+Legacy entries stay valid: merge/rename matches BOTH {t<id>, label} image
+names and replaces in place, never duplicating.
+
+## Trip categories (delivery / personal / etc.)
+
+- Category table in the trip DB: id, unique name, color (ARGB). trips
+  .category_id nullable, FK ON DELETE SET NULL.
+- Detail sheet: category chip under the trip name; tap opens a picker of
+  existing categories + "New category" (name field + color swatch palette).
+- Trip tiles: colored dot (category color) beside the title; the name is
+  also shown in the detail sheet so color is never the only signal.
+- Renaming/recoloring a category reflects on every trip instantly (DB join).
+- Deleting a category prompts a confirmation dialog stating how many trips
+  will be uncategorized, then nulls their category_id.
+
+## Multi-select trip tiles
+
+Long press enters selection mode (checkboxes appear, tap toggles, back
+clears). While a selection is active a toolbar replaces the normal header
+with: Reprocess, Categorize, Discard (confirm first, count in message),
+and Clear. Actions apply to all selected trips; pending/failed tiles are
+not selectable for Reprocess. Shares the per-trip action code paths.
+
+## Batch KMZ reprocess writes once per day
+
+Reprocessing several trips on the same KMZ day currently decompresses,
+merges one track, and recompresses the shared KMZ per trip. For batch
+reprocess (multi-select, rebuild-all): render every trip's PNG + KML
+placemark fragments to temp storage first, then open the day's KMZ once and
+merge all entries in a single read-modify-write. Fewer rewrites, and no
+window where an interrupted run leaves the day KMZ holding only the
+trips merged so far.
+
 ## Activity tab: day-section headers
 
 The Trips tab groups rows under Today / Yesterday / date headers; Activity is

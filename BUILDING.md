@@ -38,27 +38,33 @@ The release build is intentionally unsigned unless you provide your own key,
 so every user signs with their own identity. Create a keystore once:
 
 ```sh
-keytool -genkeypair -v -keystore ~/triplogger-release.jks -alias triplogger \
+keytool -genkeypair -v -keystore ~/.android/triplogger-release.jks -alias triplogger \
     -keyalg RSA -keysize 2048 -validity 10950
 ```
 
-Then create `keystore.properties` in the project root (git-ignored):
+(Press RETURN at "Enter key password" to reuse the keystore password.)
+
+Then create `keystore.properties` in the project root (git-ignored) holding
+only the NON-secret pointers:
 
 ```properties
-storeFile=/home/you/triplogger-release.jks
-storePassword=...
+storeFile=/path/to/your/triplogger-release.jks
 keyAlias=triplogger
-keyPassword=...
 ```
 
+Supply the password per invocation through the environment so it never lives
+in a file (clear it from the shell afterwards; consider `read -s` instead of
+placing it on the command line, which records it in shell history):
+
 ```sh
+export TRIPLOGGER_STORE_PASSWORD=...   # TRIPLOGGER_KEY_PASSWORD only if different
 ./gradlew assembleRelease
 ```
 
 The signed APK is written to
-`app/build/outputs/apk/release/app-release.apk`. Without
-`keystore.properties` the APK is left unsigned; sign it yourself with
-`apksigner` if you prefer.
+`app/build/outputs/apk/release/app-release.apk`. Without the environment
+variables the APK is left unsigned
+(`app-release-unsigned.apk`); sign it yourself with `apksigner` if you prefer.
 
 Keep your keystore backed up: the same key is required for every future
 upgrade install on a device.

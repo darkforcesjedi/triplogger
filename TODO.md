@@ -39,18 +39,20 @@ driving UI unprompted. Only attempt bonding when the user explicitly picked
 the adapter (Settings), not during automatic reconnects; on failure show a
 toast + Activity log entry instead.
 
-## Rotate release signing key
+## Rotate release signing key — mostly done
 
-The signing key for this repo's APKs was generated as a throwaway and its
-passwords briefly appeared in the public `releases` branch history (branch
-rebuilt clean; orphaned commit a84d83d still cached by GitHub until GC).
+The old throwaway key's passwords were briefly exposed in this branch's
+public history (commit a84d83d, cached by GitHub until GC). The key has been
+rotated, which makes the leaked password inert, and signing is now
+secret-free at rest: keystore.properties holds only storeFile/keyAlias, and
+passwords are supplied per-sign through environment variables at build time
+(see BUILDING.md).
 
-- Generate a fresh keystore, update keystore.properties, sign future
-  releases with it.
-- Ask GitHub support to purge a84d83d (or accept it once the key is rotated —
-  a rotated key makes the leaked password inert).
-- Rebuild + republish v1.2 signed with the new key (users must uninstall the
-  old-key build first; signing key changes are not install-over).
+- [x] Fresh keystore generated; v1.2 republished with the new key
+      (cert SHA-256 5afaca57...; README notes the uninstall-first caveat).
+- [x] Burned keystore archived (*.burned, referenced by nothing).
+- [ ] Optional: ask GitHub support to purge a84d83d, now that the old
+      password no longer unlocks anything.
 
 ## Localization (icebox)
 

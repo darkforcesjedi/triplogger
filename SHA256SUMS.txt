@@ -1,3 +1,3 @@
 df556616dbc6ab2aaf5e6834b435a5e9456bc5c0be397e78d2284cbf3ed432cf  DrivingTripLogger-v1.0.apk
 6755c8c908b5520e5dbfaf5d5e29284498519e348c3d58a6d4a1cd61a3c0f298  DrivingTripLogger-v1.1.apk
-ba19d83de855afd5821d37ad6976bfd5e021f20be24675484c78c8b599d0a9aa  DrivingTripLogger-v1.2.apk
+e845baecd8dec0f14698558e0c48742b8ba92a68b6641705567317f80578c79d  DrivingTripLogger-v1.2.apk

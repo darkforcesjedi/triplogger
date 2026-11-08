@@ -7,6 +7,12 @@ Download the latest:
 
     https://github.com/darkforcesjedi/triplogger/raw/releases/DrivingTripLogger-v1.2.apk
 
+**Signing key change (v1.2):** this build is signed with a new release key
+(certificate SHA-256 `5afaca57af22e3807ce312910b5d01c5ed1440394cf2785ff616399f8e19629c`).
+If you have a v1.0/v1.1 build installed (older key), uninstall it first —
+Android refuses an update signed by a different key. All future releases use
+the new key.
+
 v1.2 - built from master at 8f41c7e, minSdk 24 (Android 7.0+).
 
 - Trips tab: metadata-backed history (distance, max speed, entries,

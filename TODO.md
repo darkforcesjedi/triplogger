@@ -26,17 +26,27 @@ miles. Compute ALL estimators that available sensors support at finalize
 time, record each in the trip metadata (trip.properties now; DB column once
 the metadata database lands), and display the best estimate:
 
-- distance_odo_m (best): real odometer delta. Probe Mode 01 PID A6 once at
-  trip start; verified on the 2016 Escape (2026-11-08, odotest scan):
-  reply 41A60008BAFE = 4-byte big-endian tenths of KILOMETERS even on a
-  miles-dash car, so decode ABCD/10 km (fall back to 2-byte AB/10 for other
-  cars) and convert for display. If A6 is absent, optionally try a
-  user-entered vendor-specific PID (Settings field: hex + scale +
-  unit, empty disables it). On success re-read periodically (~every 60 s)
-  and at finalization; delta = last - first, monotonic guard. Validate the
-  source: reject constant/garbage replies (0x00/0xFFFF) and require the
-  delta to stay within ~15% of the wheel-speed integration over the same
-  window. Log odometer samples to the journal so re-runs are deterministic.
+- distance_odo_m (best): silently use the standard odometer PID, no user
+  setup. At trip start, probe Mode 01 PID A6 once (short timeout, tolerate
+  no-reply/NRC so connection setup never fails over it and cars without it
+  never see it again that trip); if it answers, poll it at a low cadence
+  (~every 60 s) alongside the live PIDs and keep the latest reading. Decode
+  verified on the 2016 Escape (2026-11-08 odotest scan): 41A60008BAFE =
+  4-byte big-endian tenths of KILOMETERS even on a miles-dash car
+  (ABCD/10 km, fall back to 2-byte AB/10 for other cars; convert for
+  display).
+- Trip end may coincide with ignition off, so never rely on reading the
+  odometer at finalization: persist every accepted reading to the journal
+  as it arrives (crash-safe and reconnect-safe), and at finalization log
+  odo_start_km and odo_end_km to the trip metadata, end = last successful
+  reading. distance_odo_m = delta (km, SI-stored).
+- Validate the source: reject constant/garbage replies (all-0x00/0xFF
+  bytes), monotonic guard, and require the delta to stay within ~15% of the
+  wheel-speed integration over the same window; on failure drop the odo
+  distance and log an Activity entry instead of trusting it.
+- Vendor-specific odometer PIDs (mode 22) are a possible later extension
+  for cars lacking A6 (the odotest project and its logs stay on hand); no
+  Settings UI for now.
 - distance_obd_m: trapezoidal integration of PID 0D wheel speed
   (sum (v1+v2)/2 * dt); this is the dash speedometer signal, so it matches
   what the driver sees and the odometer within tire-size tolerance.
@@ -51,9 +61,9 @@ the metadata database lands), and display the best estimate:
   estimate; the detail sheet lists all recorded values with their source
   labels (audit trail for expense reports).
 
-Implementation notes: ObdPids entry A6 is probe-only (never polled live;
-short timeout, unsupported-NRC tolerance so connection setup never fails
-over it); pure distance_estimators(rows) function in the finalizer with
+Implementation notes: A6 never enters the live PID list; its slow poll rides
+the poll loop on its own schedule (response length validated per reply,
+clone-safe); pure distance_estimators(rows) function in the finalizer with
 unit tests on synthetic traces (parked jitter, 3 m/s crawl, highway,
 OBD-absent) asserting the crawl no longer under-counts; store
 distance_algo = 1 so re-runs can distinguish old distance_m from

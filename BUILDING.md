@@ -73,7 +73,7 @@ upgrade install on a device.
 
 Prebuilt or self-built APKs install fine on current Android, but installing
 from a browser/file manager requires allowing "Install unknown apps" for
-that app once, and confirming Google Play Protect's warning on first run —
+that app once, and confirming Google Play Protect's warning on first run:
 this is Google's friction against drive-by APKs, not a restriction specific
 to this app. The debug APK built by `assembleDebug` and a self-signed
 release APK cannot both be installed under the same package name without

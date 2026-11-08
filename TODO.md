@@ -10,7 +10,7 @@ Trips only log Start/End today. To reconcile against Uber/DoorDash logs:
 - Detect dwell periods while recording (speed < ~1 m/s for > N seconds,
   configurable) and write them to the journal as stops
   (start_ts, end_ts, lat, lon) in a `stops.csv` alongside gps/obd.
-- Resolve stop placenames in the existing bulk Nominatim pass (never live —
+- Resolve stop placenames in the existing bulk Nominatim pass (never live:
   the 1 req/s fair-use limit means lookups must stay batched at trip end).
 - Show stops in the trip detail sheet (collapsible list, each opening in
   OSM); expose per-stop addresses in ODS export or a dedicated stops sheet.
@@ -39,7 +39,7 @@ driving UI unprompted. Only attempt bonding when the user explicitly picked
 the adapter (Settings), not during automatic reconnects; on failure show a
 toast + Activity log entry instead.
 
-## Rotate release signing key — mostly done
+## Rotate release signing key: mostly done
 
 The old throwaway key's passwords were briefly exposed in this branch's
 public history (commit a84d83d, cached by GitHub until GC). The key has been

@@ -129,7 +129,7 @@
     <string name="settings_min_trip_length_support">0 = never discard based on duration</string>
     <string name="settings_min_trip_entries">Discard Trips With Fewer Than (entries)</string>
     <string name="settings_min_trip_entries_support">0 = never discard based on entry count</string>
-    <string name="toast_trip_discarded">Trip too small (%1$d entries, minimum %2$d) — discarded</string>
+    <string name="toast_trip_discarded">Trip too small (%1$d entries, minimum %2$d); discarded</string>
     <string name="settings_rebuild">Rebuild Logs From Archive</string>
     <string name="settings_rebuild_caption">Re-convert every archived trip into the formats selected above (safe to repeat)</string>
     <string name="location_field_required">%1$s (required)</string>
@@ -200,7 +200,7 @@
     <!-- Activity tab -->
     <string name="activity_title">Activity</string>
     <string name="activity_share">Share diagnostics</string>
-    <string name="activity_empty">Nothing logged yet — events appear here as trips start, end, convert, and as the OBD adapter comes and goes.</string>
+    <string name="activity_empty">Nothing logged yet. Events appear here as trips start, end, convert, and as the OBD adapter comes and goes.</string>
 
     <!-- Batch jobs (progress notification + confirmations) -->
     <string name="settings_rebuild_confirm">Re-generating output may take a while. Continue?</string>

@@ -187,7 +187,7 @@
     <string name="trips_start">Start</string>
     <string name="trips_end">End</string>
     <string name="trips_outputs">Outputs</string>
-    <string name="trips_logged_with">Logged with app %1$s</string>
+    <string name="trips_logged_with">Logged with app version %1$s</string>
     <string name="trips_stat_distance">Distance</string>
     <string name="trips_stat_duration">Duration</string>
     <string name="trips_stat_max">Max speed</string>

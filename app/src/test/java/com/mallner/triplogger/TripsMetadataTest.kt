@@ -195,16 +195,32 @@ class TripsMetadataTest {
     // --------------------------------------------------------- Nominatim JSON
 
     @Test
-    fun nominatimParsesTimezoneAndTidiedName() {
+    fun nominatimParsesPoiLevelAddress() {
+        // real zoom=18 response shape for a restaurant in midtown Atlanta
         val json = """
-            {"display_name":"Atlanta, Fulton County, GA, USA",
+            {"display_name":"B-Fresh, 261, 19th Street Northwest, Atlantic Station, Atlanta, Fulton County, Georgia, 30363, United States",
+             "name":"B-Fresh","category":"amenity","type":"fast_food",
              "timezone":"America/New_York",
-             "address":{"city":"Atlanta","state":"Georgia","postcode":"30303","country":"USA"}}
+             "address":{"amenity":"B-Fresh","house_number":"261","road":"19th Street Northwest",
+                        "neighbourhood":"Atlantic Station","city":"Atlanta","county":"Fulton County",
+                        "state":"Georgia","postcode":"30363","country":"United States"}}
         """.trimIndent()
         val place = NominatimClient.parse(json)
         assertNotNull(place)
         assertEquals("America/New_York", place!!.timezone)
-        assertEquals("Atlanta, Georgia, 30303", place.name)
+        assertEquals("B-Fresh, 261 19th Street Northwest, Atlanta, 30363", place.name)
+    }
+
+    @Test
+    fun nominatimRuralRoadFallsBackToRoadAndCounty() {
+        val json = """
+            {"display_name":"White Creek Road, Abbeville County, South Carolina, 29620, United States",
+             "name":"White Creek Road","category":"highway","type":"unclassified",
+             "address":{"road":"White Creek Road","county":"Abbeville County","state":"South Carolina","postcode":"29620"}}
+        """.trimIndent()
+        val place = NominatimClient.parse(json)!!
+        // "White Creek Road" is a road (category highway), not a business name
+        assertEquals("White Creek Road, Abbeville County, 29620", place.name)
     }
 
     @Test
@@ -212,7 +228,6 @@ class TripsMetadataTest {
         val json = """{"display_name":"Somewhere, Over the Rainbow","timezone":"Etc/UTC"}"""
         val place = NominatimClient.parse(json)!!
         assertEquals("Etc/UTC", place.timezone)
-        // without address parts the display name is kept whole
         assertEquals("Somewhere, Over the Rainbow", place.name)
     }
 

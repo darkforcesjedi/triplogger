@@ -73,8 +73,15 @@ fast path.
   them. Journals (gps/obd CSVs) remain the raw data as today.
 - Storage mechanics: open SQLite via the underlying filesystem path of the
   selected SAF folder (primary external storage paths resolve; the app
-  already treats that folder as a normal directory); WAL mode; on storage
-  re-pick, a new DB is created there and populated by the first scan.
+  already treats that folder as a normal directory); WAL mode.
+- Storage re-pick moves the archive, it does not abandon it: if the old
+  journal root still exists and contains trips, prompt with Move (default)
+  / Copy / Leave behind. Move = copy trip folders first, then the DB last
+  (VACUUM INTO or post-copy integrity_check + row count vs folder count),
+  only then delete the old copies; interrupted runs are idempotent because
+  the DB lists what already landed. Copy yields two independent stores.
+  Leave behind creates the fresh DB at the new root. The old
+  silent-abandon behavior goes away with this item.
 - Crash safety moves from atomic property writes into transactions:
   trip lifecycle rows commit around the folder move, and a startup
   reconciliation scan repairs drift both ways (folder without row is

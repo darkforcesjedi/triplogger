@@ -8,7 +8,6 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.os.bundleOf
 import java.util.concurrent.TimeUnit
@@ -19,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * an ongoing, promoted notification using a standard (BigText) style
  * (android.requestPromotedOngoing is set only for the recording layout).
  *
- * Promotion (system-wide top of shade, lock-screen card, Samsung Now bar) requires ALL of:
+ * Promotion (system-wide top of shade, lock-screen card) requires ALL of:
  *  - android.permission.POST_PROMOTED_NOTIFICATIONS in the manifest,
  *  - the android.requestPromotedOngoing extra (set below),
  *  - setOngoing(true) and a non-empty content title,
@@ -65,9 +64,9 @@ class AppNotificationManager(private val context: Context) {
 
         /**
          * Status-chip string, shown ONLY while unlocked (the deliberate design:
-         * locked surfaces - Now bar pill and AOD - get no short-critical-text so
-         * they keep rendering the rich contentText lines they handled perfectly;
-         * the unlocked status-bar chip gets this minified form).
+         * locked surfaces get no short-critical-text, so they keep rendering
+         * the rich contentText lines; the unlocked status-bar chip gets this
+         * minified form).
          *
          * While any enabled sensor is still connecting: per-sensor glyphs
          * ("G\u2713O\u00B7"). Once every enabled sensor is connected: the recording
@@ -195,8 +194,15 @@ class AppNotificationManager(private val context: Context) {
     /** Idle/armed layout: title + status line, Stop action only. */
     fun buildInitialNotification(title: String, status: String): Notification {
         recording = false
+        // Explicit inert values (setExtras merges into the reused builder, so
+        // an empty bundle would not demote the previous recording's extras).
         notificationBuilder
-            .setExtras(Bundle()) // explicitly NOT promoted: plain ongoing notification while listening
+            .setExtras(
+                bundleOf(
+                    EXTRA_REQUEST_PROMOTED_ONGOING to false,
+                    EXTRA_SHORT_CRITICAL_TEXT to null
+                )
+            )
             .setContentTitle(title)
             .setContentText(status)
             .setStyle(NotificationCompat.BigTextStyle().bigText(status))
@@ -223,24 +229,31 @@ class AppNotificationManager(private val context: Context) {
             context.resources.getQuantityString(R.plurals.notification_entries, entries, entries)
         val allConnected = (!gpsEnabled || hasFix) && (!obdEnabled || obdConnected)
 
-        // Headline line (also the lock-screen / Now-bar pill subtitle): sensor
-        // status only while something is still connecting - once every enabled
-        // sensor is connected the trip itself is the story, so the timer and
-        // entry count take over. The expanded card always shows both lines.
+        // Headline line (also the lock-screen subtitle): sensor status only
+        // while something is still connecting - once every enabled sensor is
+        // connected the trip itself is the story, so the timer and entry
+        // count take over. The expanded card always shows both lines.
         //
-        // Locked surfaces (Now bar pill, AOD) intentionally get NO
-        // short-critical-text: they then render the contentText line above,
-        // which is how they already displayed perfectly. Only the unlocked
-        // status-bar chip needs the minified glyph string. The 1s ticker
-        // re-evaluates the lock state, so no screen-state receivers are needed.
+        // Locked surfaces intentionally get NO short-critical-text: they then
+        // render the contentText line above. Only the unlocked status-bar
+        // chip needs the minified glyph string. The 1s ticker re-evaluates
+        // the lock state, so no screen-state receivers are needed.
         val keyguardLocked = runCatching {
             context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         }.getOrDefault(false)
 
         notificationBuilder
             .setExtras(
+                // NotificationCompat.Builder.setExtras MERGES into the reused
+                // builder, so the locked branch must CLEAR the chip with an
+                // explicit null: a chip set while unlocked would otherwise
+                // silently survive into the locked state (on-device verified:
+                // stale shortCriticalText in the live record while locked).
                 if (keyguardLocked) {
-                    bundleOf(EXTRA_REQUEST_PROMOTED_ONGOING to true)
+                    bundleOf(
+                        EXTRA_REQUEST_PROMOTED_ONGOING to true,
+                        EXTRA_SHORT_CRITICAL_TEXT to null
+                    )
                 } else {
                     bundleOf(
                         EXTRA_REQUEST_PROMOTED_ONGOING to true, // Live Update while recording

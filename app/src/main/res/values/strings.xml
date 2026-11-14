@@ -31,6 +31,9 @@
     <!-- Permissions (Home) -->
     <string name="permissions_missing">Permissions not granted. Please grant permissions for the app to function correctly.</string>
     <string name="permissions_enable">Enable Permissions</string>
+    <string name="permissions_background_needed">Background location needed</string>
+    <string name="permissions_background_dialog">Background location is required to continue tracking when you use other apps or lock the device. Enable in Permissions &gt; Location &gt; Allow all the time.</string>
+    <string name="permissions_open_settings">Open Settings</string>
 
     <!-- Home: service controls -->
     <string name="home_service_enabled">Service Enabled</string>

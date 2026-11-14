@@ -3,6 +3,7 @@ package com.mallner.triplogger
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.annotation.StringRes
@@ -30,22 +31,26 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -101,7 +106,14 @@ fun TripLoggerApp() {
     val context = LocalContext.current
     val appSettingsRepository = remember { AppSettingsRepository(context) }
 
-    val permissionsToRequest = remember {
+    // Dialog-grantable runtime permissions. ACCESS_BACKGROUND_LOCATION is
+    // deliberately NOT part of this batch: since Android 11 it can never be
+    // granted through requestPermissions() (the system resolves such requests
+    // silently without showing any UI, and on One UI its presence swallowed
+    // the whole batch - the dead "Enable permissions" button). It is only
+    // grantable as "Allow all the time" in app settings, so it gets its own
+    // soft-warning row and a deep link there instead.
+    val essentialPermissions = remember {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -111,19 +123,18 @@ fun TripLoggerApp() {
             permissions.add(Manifest.permission.BLUETOOTH_ADMIN)
         }
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         permissions.toTypedArray()
     }
+    val needsBackgroundLocation = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+    fun isGranted(permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    var permissionsGranted by rememberSaveable {
-        mutableStateOf(permissionsToRequest.all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        })
+    var permissionsGranted by rememberSaveable { mutableStateOf(essentialPermissions.all { isGranted(it) }) }
+    var backgroundLocationGranted by rememberSaveable {
+        mutableStateOf(!needsBackgroundLocation || isGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
     }
 
     val launcher = rememberLauncherForActivityResult(
@@ -131,14 +142,23 @@ fun TripLoggerApp() {
     ) { permissionsResult ->
         permissionsGranted = permissionsResult.values.all { it }
     }
+    val openAppSettings = {
+        context.startActivity(
+            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                permissionsGranted = permissionsToRequest.all {
-                    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-                }
+                // Re-check after returning from runtime dialogs or app settings.
+                permissionsGranted = essentialPermissions.all { isGranted(it) }
+                backgroundLocationGranted =
+                    !needsBackgroundLocation || isGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -172,7 +192,13 @@ fun TripLoggerApp() {
             contentWindowInsets = WindowInsets.safeDrawing.union(WindowInsets.ime)
         ) { innerPadding ->
             if (currentDestination == AppDestinations.HOME) {
-                HomeScreen(modifier = Modifier.padding(innerPadding), permissionsGranted = permissionsGranted, onRequestPermissions = { launcher.launch(permissionsToRequest) })
+                HomeScreen(
+                    modifier = Modifier.padding(innerPadding),
+                    permissionsGranted = permissionsGranted,
+                    backgroundLocationGranted = backgroundLocationGranted,
+                    onRequestPermissions = { launcher.launch(essentialPermissions) },
+                    onOpenAppSettings = openAppSettings
+                )
             } else if (currentDestination == AppDestinations.TRIPS) {
                 TripsScreen(modifier = Modifier.padding(innerPadding), appSettingsRepository)
             } else if (currentDestination == AppDestinations.ACTIVITY) {
@@ -185,7 +211,13 @@ fun TripLoggerApp() {
 }
 
 @Composable
-fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onRequestPermissions: () -> Unit) {
+fun HomeScreen(
+    modifier: Modifier = Modifier,
+    permissionsGranted: Boolean,
+    backgroundLocationGranted: Boolean,
+    onRequestPermissions: () -> Unit,
+    onOpenAppSettings: () -> Unit
+) {
     val context = LocalContext.current
     val appSettingsRepository = remember { AppSettingsRepository(context) }
     val appSettings by appSettingsRepository.appSettingsFlow.collectAsState(initial = AppSettings("", 10, false, 10 * 1024, false, "", serviceEnabled = false))
@@ -218,6 +250,47 @@ fun HomeScreen(modifier: Modifier = Modifier, permissionsGranted: Boolean, onReq
                 Text(stringResource(R.string.permissions_enable))
             }
             return@Column
+        }
+
+        // Soft warning, never a blocker: "Allow all the time" cannot be
+        // requested via runtime dialog, so tapping it opens a context dialog
+        // that deep-links to this app's settings page.
+        if (!backgroundLocationGranted) {
+            var showBackgroundLocationHint by remember { mutableStateOf(false) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clickable { showBackgroundLocationHint = true }
+                    .padding(vertical = 4.dp)
+            ) {
+                Icon(
+                    Icons.Filled.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.permissions_background_needed),
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp
+                )
+            }
+            if (showBackgroundLocationHint) {
+                AlertDialog(
+                    onDismissRequest = { showBackgroundLocationHint = false },
+                    text = { Text(stringResource(R.string.permissions_background_dialog)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showBackgroundLocationHint = false
+                            onOpenAppSettings()
+                        }) { Text(stringResource(R.string.permissions_open_settings)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showBackgroundLocationHint = false }) { Text(stringResource(android.R.string.cancel)) }
+                    }
+                )
+            }
         }
 
         // ------------------------------------------------------------- Controls

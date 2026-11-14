@@ -166,13 +166,16 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
                     }
                 },
                 onDiscard = {
-                    busy = trip.name; message = null
+                    // Close the sheet right away: the SAF move plus a full list
+                    // reload can take seconds, and a sheet left open over a
+                    // discarded trip is confusing. Failure re-surfaces as a
+                    // message once the reload lands.
+                    message = null
+                    detail = null
                     coroutineScope.launch {
                         repository.discardToFailed(trip)
                             .onFailure { message = it.message }
-                        busy = null
                         entries = repository.load()
-                        detail = null
                     }
                 },
                 onLookUp = {

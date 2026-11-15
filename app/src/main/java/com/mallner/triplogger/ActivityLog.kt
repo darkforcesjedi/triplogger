@@ -142,6 +142,12 @@ object ActivityLog {
         }
     }
 
+    /** Detach (restore flow replaced the database file underneath us). */
+    @Synchronized
+    fun clearAttachment() {
+        store = null
+    }
+
     /** Append one event. Safe before [init] (memory only until something starts). */
     @Synchronized
     fun log(event: String, message: String = "", vararg fields: Pair<String, String>) {

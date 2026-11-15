@@ -799,6 +799,12 @@ class DrivingService : Service() {
                     return@launch
                 }
                 finalizeTrip(store, trip, tripState = TripDatabase.STATE_PENDING)
+                // Long-lived services still get their daily snapshot on the
+                // first trip completion after the day mark.
+                runCatching {
+                    Storage.metadataStore(this@DrivingService, settingsSnapshot())
+                        ?.let { DbBackup.maybeDaily(it) }
+                }
             } catch (e: Exception) {
                 Log.e("DrivingService", "Trip ${journal.tripId} left for recovery", e)
             }
@@ -962,6 +968,8 @@ class DrivingService : Service() {
                     }
                 }
                 purgeArchive(store)
+                // Service-start backup: snapshot once a day when changed.
+                runCatching { DbBackup.maybeDaily(db ?: return@runCatching) }
             } finally {
                 recovering.set(false)
             }
@@ -974,13 +982,14 @@ class DrivingService : Service() {
      * purged_retention, so a failed delete leaves the trip `present` and
      * the next sweep retries. Metadata outlives its raw samples by design.
      */
-    private fun purgeArchive(store: JournalStore) {
+    private suspend fun purgeArchive(store: JournalStore) {
         val settings = settingsSnapshot()
         val policy = ArchivePolicy(settings.archiveRetentionDays, settings.archiveMinTripSec)
         if (policy.retentionDays <= 0 && policy.minTripSec <= 0) return
         val db = Storage.metadataStore(this, settings) ?: return
         val now = System.currentTimeMillis()
         val folders = store.archivedTrips().associateBy { it.name }
+        var prePurgeSnapshotTaken = false
         for (row in db.trips(TripDatabase.STATE_ARCHIVE)) {
             if (row.rawState != TripDatabase.RAW_PRESENT) continue
             try {
@@ -993,6 +1002,12 @@ class DrivingService : Service() {
                     // deleted (reconciliation flags it missing), not purged.
                     val orphan = folders[row.folder] ?: continue
                     Log.i("DrivingService", "Purging archived trip ${row.folder} (retention policy)")
+                    if (!prePurgeSnapshotTaken) {
+                        // Raw samples vanish for good; keep one snapshot
+                        // of the metadata as it was before the sweep.
+                        prePurgeSnapshotTaken = true
+                        runCatching { DbBackup.snapshot(db, "pre-purge") }
+                    }
                     runCatching { store.delete(orphan) }.onFailure { throw it }
                     db.setRawState(row.id, TripDatabase.RAW_PURGED_RETENTION, now)
                     ActivityLog.log("trip_purged", row.folder, "policy" to "retention")

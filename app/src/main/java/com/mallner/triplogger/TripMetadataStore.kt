@@ -32,7 +32,15 @@ class TripMetadataStore(context: Context, private val rootDir: File) : TripMetad
         if (metaGetDb(db, TripDatabase.META_ROOT_TOKEN) == null) {
             metaSetDb(db, TripDatabase.META_ROOT_TOKEN, UUID.randomUUID().toString())
         }
+        // Record whether WAL stuck on this mount (FUSE variants differ).
+        val mode = runCatching {
+            db.rawQuery("PRAGMA journal_mode", null).use { if (it.moveToFirst()) it.getString(0) else null }
+        }.getOrNull()
+        metaSetDb(db, TripDatabase.META_JOURNAL_MODE, mode ?: "unknown")
     }
+
+    /** Journal root folder; `backups/` snapshots live beside the database. */
+    val journalRoot: File get() = rootDir
 
     /** Identifies this journal root+DB pair; survives folder renames. */
     val rootToken: String
@@ -552,6 +560,33 @@ class TripMetadataStore(context: Context, private val rootDir: File) : TripMetad
         helper.readableDatabase.compileStatement(
             "SELECT COUNT(*) FROM trips WHERE deleted_at IS NULL"
         ).simpleQueryForLong()
+
+    /**
+     * SQLite-native consistent snapshot at [destPath] (API 30+). Must run
+     * OUTSIDE any transaction (VACUUM semantics) and the target must not
+     * exist, so it bypasses the [write] helpers entirely.
+     */
+    fun vacuumInto(destPath: String) {
+        helper.writableDatabase.rawQuery("VACUUM INTO ?", arrayOf(destPath)).use { it.moveToFirst() }
+    }
+
+    /** Fold the WAL back into the main file before a pre-API-30 copy. */
+    fun checkpointWal() {
+        helper.writableDatabase.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { it.moveToFirst() }
+    }
+
+    /** Bookkeeping rows for pruned snapshot files (files are the truth). */
+    fun pruneBackupRows(keep: Set<String>) = write { db ->
+        if (keep.isEmpty()) {
+            db.execSQL("DELETE FROM backups WHERE name LIKE 'triplogger-%'")
+        } else {
+            val marks = keep.joinToString(",") { "?" }
+            db.execSQL(
+                "DELETE FROM backups WHERE name LIKE 'triplogger-%' AND name NOT IN ($marks)",
+                keep.toTypedArray()
+            )
+        }
+    }
 
     /**
      * Apply a computed [Reconciliation.Plan]: flag vanished folders missing,

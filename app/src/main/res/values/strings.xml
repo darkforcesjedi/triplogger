@@ -175,6 +175,13 @@
     <string name="trips_refresh">Refresh</string>
     <string name="trips_empty">No trips yet. Recorded trips appear here after each drive.</string>
     <string name="trips_no_storage">Set a Temporary Storage Location in Settings to record and list trips.</string>
+    <string name="trips_db_damaged">The trip database cannot be opened.</string>
+    <string name="trips_db_damaged_body">Your recorded journals are untouched, and a database backup was found (%1$s). Restoring brings back trips, titles, settings and activity history from that snapshot.</string>
+    <string name="trips_restore_action">Restore database backup</string>
+    <string name="trips_restore_title">Restore %1$s?</string>
+    <string name="trips_restore_body">The current database file will be replaced by this backup. Anything recorded after the backup was made will be gone. The backup file itself is kept.</string>
+    <string name="trips_restore_done">Database restored from %1$s</string>
+    <string name="trips_restore_failed">Restore failed: %1$s</string>
     <string name="trips_unfinished">Unfinished (%1$d)</string>
     <string name="trips_failed_section">Failed / discarded (%1$d)</string>
     <string name="trips_clear_failed">Clear failed</string>

@@ -62,6 +62,12 @@ object Storage {
         }
     }
 
+    /** Close and evict the cached store (before replacing the db file). */
+    fun dropMetadataStore(uri: String) {
+        val removed = metadataStores.remove(uri)
+        runCatching { removed?.close() }
+    }
+
     /** Output folder (KMZ/ODS); falls back to the legacy combined folder. */
     fun outputStorage(context: Context, settings: AppSettings, uri: String): TripStorage? {
         val effective = uri.ifEmpty { settings.storageLocationUri }
@@ -169,6 +175,24 @@ class TripsRepository(private val context: Context) {
             toEntry(row, distances[row.id], maxSpeeds[row.id]?.values?.firstOrNull(),
                 kmzDays[row.id], odsFiles[row.id])
         }
+    }
+
+    /**
+     * Restorable snapshot names (newest first), non-empty only when a
+     * journal is configured, its database cannot be opened, and backups/
+     * holds files. Drives the restore card on the Trips tab (Stage C).
+     */
+    suspend fun restorableBackups(): List<String> = withContext(Dispatchers.IO) {
+        val settings = snapshot()
+        if (settings.tempLocationUri.isEmpty()) return@withContext emptyList()
+        if (Storage.metadataStore(context, settings) != null) return@withContext emptyList()
+        val root = JournalPath.rootDir(settings.tempLocationUri)
+            ?: return@withContext emptyList()
+        DbBackup.availableBackups(root).map { it.name }
+    }
+
+    suspend fun restoreBackup(name: String): DbBackup.Outcome = withContext(Dispatchers.IO) {
+        DbBackup.restore(context, snapshot().tempLocationUri, name)
     }
 
     private fun toEntry(

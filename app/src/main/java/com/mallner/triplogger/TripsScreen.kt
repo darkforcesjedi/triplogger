@@ -79,9 +79,19 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
     var message by remember { mutableStateOf<String?>(null) }
     var pendingOpen by remember { mutableStateOf(false) }
     var failedOpen by remember { mutableStateOf(false) }
+    var restorable by remember { mutableStateOf<List<String>>(emptyList()) }
+    var confirmRestore by remember { mutableStateOf(false) }
 
     LaunchedEffect(refreshKey) {
-        entries = repository.load()
+        val loaded = repository.load()
+        entries = loaded
+        // An empty list with storage set is the corruption signature;
+        // offer backups only then (cheap file listing, no DB needed).
+        restorable = if (loaded.isEmpty() && appSettings.tempLocationUri.isNotEmpty()) {
+            repository.restorableBackups()
+        } else {
+            emptyList()
+        }
     }
 
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -111,7 +121,21 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
         // ------------------------------------------------------------ archive
         val archive = list.filter { it.section == TripSection.ARCHIVE }
         if (archive.isEmpty()) {
-            Text(stringResource(R.string.trips_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (restorable.isNotEmpty()) {
+                Text(stringResource(R.string.trips_db_damaged), color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.trips_db_damaged_body, restorable.first()),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = { confirmRestore = true }) {
+                    Text(stringResource(R.string.trips_restore_action))
+                }
+            } else {
+                Text(stringResource(R.string.trips_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         archive.groupBy { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it.startMs)) }
             .forEach { (day, trips) ->
@@ -240,6 +264,30 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
                 }
             },
             dismissButton = { DialogActionButton(stringResource(R.string.action_cancel)) { confirmClearFailed = false } }
+        )
+    }
+
+    if (confirmRestore && restorable.isNotEmpty()) {
+        val name = restorable.first()
+        AlertDialog(
+            onDismissRequest = { confirmRestore = false },
+            title = { Text(stringResource(R.string.trips_restore_title, name)) },
+            text = { Text(stringResource(R.string.trips_restore_body)) },
+            confirmButton = {
+                DialogActionButton(stringResource(R.string.trips_restore_action)) {
+                    coroutineScope.launch {
+                        val outcome = repository.restoreBackup(name)
+                        confirmRestore = false
+                        message = if (outcome.ok) {
+                            context.getString(R.string.trips_restore_done, outcome.name ?: name)
+                        } else {
+                            context.getString(R.string.trips_restore_failed, outcome.error ?: "unknown")
+                        }
+                        refreshKey++
+                    }
+                }
+            },
+            dismissButton = { DialogActionButton(stringResource(R.string.action_cancel)) { confirmRestore = false } }
         )
     }
 }

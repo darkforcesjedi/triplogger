@@ -47,7 +47,7 @@ object JournalSync {
         }
     }
 
-    private fun scan(context: Context, settings: AppSettings, db: TripMetadataStore) {
+    private suspend fun scan(context: Context, settings: AppSettings, db: TripMetadataStore) {
         val store = Storage.journalStore(context, settings) ?: return
         val now = System.currentTimeMillis()
         val folders = store.allTripFolders()
@@ -55,6 +55,12 @@ object JournalSync {
             db.allRowsLite(),
             folders.map { Reconciliation.DiskFolder(it.name, it.state, it.hasContent) }
         )
+
+        // Snapshot before a migration consumes trip.properties: the files
+        // are deleted after import, so this is the last consistent "before".
+        if (plan.importFolders.isNotEmpty() && db.tripCount() > 0) {
+            runCatching { DbBackup.snapshot(db, "pre-import") }
+        }
 
         var imported = 0
         for (stray in plan.importFolders) {

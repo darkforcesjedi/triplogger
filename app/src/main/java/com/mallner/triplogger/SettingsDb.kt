@@ -242,11 +242,14 @@ internal object SettingsDb {
         }
     }
 
-    /** Test seam: return the cache to the pristine detached state. */
-    internal fun resetForTests() {
+    /** Detach (restore flow replaced the database file underneath us). */
+    fun clearAttachment() {
         synchronized(lock) {
             values = emptyMap(); pending.clear(); kv = null
         }
         bump()
     }
+
+    /** Test seam: return the cache to the pristine detached state. */
+    internal fun resetForTests() = clearAttachment()
 }

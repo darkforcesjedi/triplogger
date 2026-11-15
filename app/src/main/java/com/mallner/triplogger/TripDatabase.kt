@@ -38,6 +38,7 @@ class TripDatabase(context: Context, file: File) :
         const val META_LAST_RESTORE_AT = "last_restore_at"
         const val META_LAST_SCAN_MS = "last_scan_ms"
         const val META_LAST_RECONCILE_MS = "last_reconcile_ms"
+        const val META_JOURNAL_MODE = "journal_mode"
 
         // Shared state names (rows carry the same literals; keep in sync with JournalStore folder layout)
         const val STATE_PENDING = "pending"

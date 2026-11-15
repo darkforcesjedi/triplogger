@@ -25,7 +25,7 @@ class TripDatabase(context: Context, file: File) :
     val dbFilePath: String = file.absolutePath
 
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
         const val DB_FILE_NAME = "triplogger.db"
         const val BACKUPS_DIR_NAME = "backups"
 
@@ -179,6 +179,8 @@ class TripDatabase(context: Context, file: File) :
             """.trimIndent()
         )
 
+        createStops(db)
+
         db.execSQL(
             """
             CREATE TABLE activity(
@@ -231,6 +233,23 @@ class TripDatabase(context: Context, file: File) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // One explicit transaction per future upgrade; v1 has nothing to do.
+        // v1 -> v2: stop detection (StopDetector) records confirmed dwells.
+        if (oldVersion < 2) createStops(db)
     }
+
+    /** In-trip stops recorded by stop detection (annotate mode). */
+    internal fun createStops(db: SQLiteDatabase) = db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS stops(
+            trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            start_ms INTEGER NOT NULL,
+            end_ms INTEGER NOT NULL,
+            duration_s INTEGER NOT NULL,
+            latitude REAL,
+            longitude REAL,
+            source TEXT NOT NULL,
+            PRIMARY KEY(trip_id, start_ms)
+        )
+        """.trimIndent()
+    )
 }

@@ -38,6 +38,8 @@ internal object SettingsCodec {
     const val KEY_ARCHIVE_RETENTION_DAYS = "archive_retention_days"
     const val KEY_ARCHIVE_MIN_TRIP_SEC = "archive_min_trip_sec"
     const val KEY_DISCARD_BELOW_ENTRIES = "discard_below_entries"
+    const val KEY_STOP_DETECTION_MODE = "stop_detection_mode"
+    const val KEY_STOP_MIN_DURATION_SEC = "stop_min_duration_sec"
     const val KEY_SHOW_HYBRID_CHARGE = "show_hybrid_charge"
     const val KEY_SHOW_FUEL_LEVEL = "show_fuel_level"
     const val KEY_SPEED_GAUGE_MAX_US = "speed_gauge_max_us"
@@ -86,6 +88,8 @@ internal object SettingsCodec {
         KEY_ARCHIVE_RETENTION_DAYS to enc(s.archiveRetentionDays),
         KEY_ARCHIVE_MIN_TRIP_SEC to enc(s.archiveMinTripSec),
         KEY_DISCARD_BELOW_ENTRIES to enc(s.discardBelowEntries),
+        KEY_STOP_DETECTION_MODE to enc(s.stopDetectionMode),
+        KEY_STOP_MIN_DURATION_SEC to enc(s.stopMinDurationSec),
         KEY_SHOW_HYBRID_CHARGE to enc(s.showHybridCharge),
         KEY_SHOW_FUEL_LEVEL to enc(s.showFuelLevel),
         KEY_SPEED_GAUGE_MAX_US to enc(s.speedGaugeMaxUs),
@@ -132,6 +136,8 @@ internal object SettingsCodec {
             speedGaugeMaxUs = int(KEY_SPEED_GAUGE_MAX_US, base.speedGaugeMaxUs),
             speedGaugeMaxMetric = int(KEY_SPEED_GAUGE_MAX_METRIC, base.speedGaugeMaxMetric),
             rpmGaugeMax = int(KEY_RPM_GAUGE_MAX, base.rpmGaugeMax),
+            stopDetectionMode = int(KEY_STOP_DETECTION_MODE, base.stopDetectionMode),
+            stopMinDurationSec = int(KEY_STOP_MIN_DURATION_SEC, base.stopMinDurationSec),
         )
     }
 }

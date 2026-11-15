@@ -3,6 +3,17 @@ package com.mallner.triplogger
 import kotlin.math.cos
 import kotlin.math.exp
 
+/** Setting values for AppSettings.stopDetectionMode. */
+object StopDetection {
+    const val OFF = 0
+
+    /** Confirmed stops are recorded on the trip as metadata. */
+    const val ANNOTATE = 1
+
+    /** A confirmed stop closes the current trip; motion resumes a new one. */
+    const val SPLIT = 2
+}
+
 /**
  * A confirmed stop: the vehicle was stationary from [startMs] to [endMs]
  * centred on [latitude]/[longitude] (null when no GPS fixes existed during

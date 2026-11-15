@@ -58,7 +58,11 @@ data class AppSettings(
     /** Gauge scales (top of the dial); speed max is kept per unit system */
     val speedGaugeMaxUs: Int = 160,      // mph, 10..200 step 5
     val speedGaugeMaxMetric: Int = 260,  // km/h, 10..350 step 5
-    val rpmGaugeMax: Int = 7000          // 1000..15000 step 500
+    val rpmGaugeMax: Int = 7000,         // 1000..15000 step 500
+    /** Idle/stop detection: StopDetection OFF / ANNOTATE / SPLIT */
+    val stopDetectionMode: Int = 0,
+    /** A dwell must last this long (and resume) to count as a stop */
+    val stopMinDurationSec: Int = 120
 )
 
 object AppSettingsKeys {
@@ -89,6 +93,8 @@ object AppSettingsKeys {
     val SPEED_GAUGE_MAX_US = intPreferencesKey("speed_gauge_max_us")
     val SPEED_GAUGE_MAX_METRIC = intPreferencesKey("speed_gauge_max_metric")
     val RPM_GAUGE_MAX = intPreferencesKey("rpm_gauge_max")
+    val STOP_DETECTION_MODE = intPreferencesKey("stop_detection_mode")
+    val STOP_MIN_DURATION_SEC = intPreferencesKey("stop_min_duration_sec")
 }
 
 /**
@@ -301,6 +307,22 @@ class AppSettingsRepository(private val context: Context) {
         writeThrough(SettingsCodec.KEY_RPM_GAUGE_MAX, v)
     }
 
+    suspend fun updateStopDetectionMode(mode: Int) {
+        val v = mode.coerceIn(StopDetection.OFF, StopDetection.SPLIT)
+        context.dataStore.edit {
+            it[AppSettingsKeys.STOP_DETECTION_MODE] = v
+        }
+        writeThrough(SettingsCodec.KEY_STOP_DETECTION_MODE, v)
+    }
+
+    suspend fun updateStopMinDurationSec(seconds: Int) {
+        val v = seconds.coerceIn(30, 7_200)
+        context.dataStore.edit {
+            it[AppSettingsKeys.STOP_MIN_DURATION_SEC] = v
+        }
+        writeThrough(SettingsCodec.KEY_STOP_MIN_DURATION_SEC, v)
+    }
+
     private fun mapAppSettings(preferences: Preferences): AppSettings {
         val bluetoothDeviceName = preferences[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] ?: ""
         val loggingFrequency = preferences[AppSettingsKeys.LOGGING_FREQUENCY] ?: 10
@@ -331,12 +353,15 @@ class AppSettingsRepository(private val context: Context) {
         val speedGaugeMaxUs = preferences[AppSettingsKeys.SPEED_GAUGE_MAX_US] ?: 160
         val speedGaugeMaxMetric = preferences[AppSettingsKeys.SPEED_GAUGE_MAX_METRIC] ?: 260
         val rpmGaugeMax = preferences[AppSettingsKeys.RPM_GAUGE_MAX] ?: 7000
+        val stopDetectionMode = preferences[AppSettingsKeys.STOP_DETECTION_MODE] ?: 0
+        val stopMinDurationSec = preferences[AppSettingsKeys.STOP_MIN_DURATION_SEC] ?: 120
         return AppSettings(
             bluetoothDeviceName, loggingFrequency, splitEnabled, maxSegmentSizeKb, forceLogging, storageLocationUri, serviceEnabled,
             gpsEnabled, obdEnabled, obdDeviceName, obdPollIntervalMs, obdSelectedPids, generateKmz, saveOds,
             tempLocationUri, kmzLocationUri, odsLocationUri, usUnits, placeNameLookups, archiveRetentionDays, archiveMinTripSec,
             discardBelowEntries,
-            showHybridCharge, showFuelLevel, speedGaugeMaxUs, speedGaugeMaxMetric, rpmGaugeMax
+            showHybridCharge, showFuelLevel, speedGaugeMaxUs, speedGaugeMaxMetric, rpmGaugeMax,
+            stopDetectionMode, stopMinDurationSec
         )
     }
 }

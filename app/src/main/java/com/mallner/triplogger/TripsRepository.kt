@@ -408,6 +408,14 @@ class TripsRepository(private val context: Context) {
             resolved
         }
 
+    /** Confirmed stops (annotate mode) of a trip, earliest first. */
+    suspend fun stopsOf(entry: TripEntry): List<TripMetadataStore.StopRow> = withContext(Dispatchers.IO) {
+        runCatching {
+            val (db, row) = rowFor(entry)
+            db.listStops(row.id)
+        }.getOrDefault(emptyList())
+    }
+
     /** Start/end coordinates (for the detail sheet) of a trip, if recorded. */
     suspend fun endpoints(tripName: String): Pair<Pair<Double, Double>?, Pair<Double, Double>?> =
         withContext(Dispatchers.IO) {

@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -401,7 +402,9 @@ private fun TripDetail(
     var coords by remember(trip.name) {
         mutableStateOf<Pair<Pair<Double, Double>?, Pair<Double, Double>?>?>(null)
     }
+    var stops by remember(trip.name) { mutableStateOf<List<TripMetadataStore.StopRow>?>(null) }
     LaunchedEffect(trip.name) { coords = repository.endpoints(trip.name) }
+    LaunchedEffect(trip.name) { stops = repository.stopsOf(trip) }
 
     val timeFmt = SimpleDateFormat("MMM d, h:mm:ss a", Locale.getDefault())
     val tz = trip.tzAbbrev
@@ -456,6 +459,32 @@ private fun TripDetail(
             stringResource(R.string.trips_stat_segments), if (trip.segments > 0) trip.segments.toString() else "—",
             stringResource(R.string.trips_stat_trigger), trip.trigger ?: "—"
         )
+
+        // Confirmed idle/stop detections (stop detection = annotate). Times
+        // are trip-local like every other timestamp in this sheet.
+        val shownStops = stops
+        if (!shownStops.isNullOrEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(stringResource(R.string.trips_stops), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            shownStops.forEach { s ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        timeFmt.format(Date(s.startMs)) + "  ·  " +
+                            AppNotificationManager.formatChipDuration(s.durationSec * 1000),
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(s.source, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val lat = s.latitude
+                    val lon = s.longitude
+                    if (lat != null && lon != null) {
+                        IconButton(onClick = { openInMaps(context, lat, lon) }) {
+                            Icon(Icons.Default.Place, contentDescription = stringResource(R.string.trips_stops))
+                        }
+                    }
+                }
+            }
+        }
 
         // Every distance method that had data, hidden behind a link so the
         // headline stays the single best estimate (audit trail for expense reports).

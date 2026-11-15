@@ -365,6 +365,49 @@ class TripMetadataStore(context: Context, private val rootDir: File) : TripMetad
         }
     }
 
+    // ------------------------------------------------------------------ stops
+
+    /** Persist confirmed stops detected during a recording (annotate mode). */
+    fun insertStops(tripId: String, stops: List<StopEvent>) = write { db ->
+        stops.forEach { s ->
+            db.execSQL(
+                "INSERT OR REPLACE INTO stops(trip_id, start_ms, end_ms, duration_s, latitude, longitude, source) " +
+                    "VALUES(?,?,?,?,?,?,?)",
+                arrayOf(tripId, s.startMs, s.endMs, s.durationSec, s.latitude, s.longitude, s.source)
+            )
+        }
+    }
+
+    /** Stops of one trip, earliest first. */
+    fun listStops(tripId: String): List<StopRow> =
+        helper.readableDatabase.rawQuery(
+            "SELECT start_ms, end_ms, duration_s, latitude, longitude, source FROM stops " +
+                "WHERE trip_id=? ORDER BY start_ms",
+            arrayOf(tripId)
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(
+                        StopRow(
+                            c.getLong(0), c.getLong(1), c.getLong(2),
+                            if (c.isNull(3)) null else c.getDouble(3),
+                            if (c.isNull(4)) null else c.getDouble(4),
+                            c.getString(5)
+                        )
+                    )
+                }
+            }
+        }
+
+    data class StopRow(
+        val startMs: Long,
+        val endMs: Long,
+        val durationSec: Long,
+        val latitude: Double?,
+        val longitude: Double?,
+        val source: String
+    )
+
     fun extValue(tripId: String, key: String): String? =
         helper.readableDatabase.rawQuery(
             "SELECT value FROM trip_ext WHERE trip_id=? AND key=?", arrayOf(tripId, key)

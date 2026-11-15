@@ -150,6 +150,14 @@
     <string name="settings_min_trip_length_support">0 = never discard based on duration</string>
     <string name="settings_min_trip_entries">Discard Trips With Fewer Than (entries)</string>
     <string name="settings_min_trip_entries_support">0 = never discard based on entry count</string>
+    <string name="settings_stop_detection">Stop Detection</string>
+    <string name="settings_stop_mode_off">Off</string>
+    <string name="settings_stop_mode_annotate">Mark stops on trips</string>
+    <string name="settings_stop_mode_split">End trips at stops</string>
+    <string name="settings_stop_detection_caption">Uses wheel speed while the OBD adapter answers, GPS otherwise. While recording, GPS logging is kept at 5 s or less and wheel speed is polled every second.</string>
+    <string name="settings_stop_min_duration">Minimum Stop Duration (s)</string>
+    <string name="settings_stop_min_duration_support">A stationary period must last this long and end with motion to count as a stop; a trip ending during a dwell records none</string>
+    <string name="trips_stops">Stops</string>
     <string name="toast_trip_discarded">Trip too small (%1$d entries, minimum %2$d); discarded</string>
     <string name="settings_rebuild">Rebuild Logs From Archive</string>
     <string name="settings_rebuild_caption">Re-convert every archived trip into the formats selected above (safe to repeat)</string>

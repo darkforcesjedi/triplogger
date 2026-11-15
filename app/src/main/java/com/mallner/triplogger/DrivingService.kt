@@ -398,8 +398,17 @@ class DrivingService : Service() {
         promoteForegroundIfNeeded(notification)
 
         createJournal(settings, DrivingStatus.triggeredBy.value)
+        startStopDetector(settings)
         if (settings.gpsEnabled) {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, settings.loggingFrequency * 1000L).build()
+            // Stop detection needs fixes dense enough for the filter and the
+            // centroid census; the user cadence is capped, never raised.
+            val gpsIntervalSec =
+                if (settings.stopDetectionMode != StopDetection.OFF)
+                    StopDetector.enforcedGpsIntervalSec(settings.loggingFrequency)
+                else settings.loggingFrequency
+            val locationRequest = LocationRequest.Builder(
+                Priority.PRIORITY_HIGH_ACCURACY, gpsIntervalSec * 1000L
+            ).build()
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
         }
 
@@ -415,6 +424,25 @@ class DrivingService : Service() {
 
     /** Live mileage accumulators for the Home screen (best available source). */
     private val liveDistance = LiveDistance()
+
+    /**
+     * Idle/stop detector for the running session (stop detection settings);
+     * null while disabled or not recording. GPS fixes and wheel samples are
+     * fed from their respective threads; StopDetector synchronizes.
+     */
+    @Volatile private var stopDetector: StopDetector? = null
+
+    /** Stops confirmed during the current journal (annotate mode), drained at finalize. */
+    private val journalStops = java.util.concurrent.ConcurrentLinkedQueue<StopEvent>()
+
+    private fun drainJournalStops(): List<StopEvent> {
+        val out = mutableListOf<StopEvent>()
+        while (true) {
+            val e = journalStops.poll() ?: break
+            out += e
+        }
+        return out.sortedBy { it.startMs }
+    }
 
     /**
      * Odometer (Mode 01 A6) probe state. A6 never enters the live PID list;
@@ -482,6 +510,11 @@ class DrivingService : Service() {
 
         obdJob?.cancel()
         obdJob = null
+        // A dwell still open at session end is the end of the trip, not a
+        // stop: finishTrip drops it without recording (journalStops survives
+        // for the finalize below to drain).
+        stopDetector?.finishTrip()
+        stopDetector = null
 
         runCatching {
             val journal = synchronized(journalLock) { currentJournal }
@@ -545,11 +578,58 @@ class DrivingService : Service() {
                     )
                 }.onFailure { Log.e("DrivingService", "Cannot insert trips row for $tripId", it) }
                 currentJournal = journal
+                journalStops.clear()
                 DrivingStatus.startedAtMs.value = journal.startMs
             } catch (e: Exception) {
                 Log.e("DrivingService", "Error creating log journal", e)
             }
         }
+    }
+
+    /**
+     * Session stop detector per settings; null (no detection) when off.
+     * ANNOTATE collects closed stops for the database at finalize; SPLIT
+     * treats a CONFIRMATION as the end of one trip and the following
+     * resume as the start of the next - the dwell itself belongs to
+     * neither, so it is never recorded as a stop of either segment.
+     */
+    private fun startStopDetector(settings: AppSettings) {
+        stopDetector = if (settings.stopDetectionMode == StopDetection.OFF) null else StopDetector(
+            minDurationMs = settings.stopMinDurationSec * 1000L,
+            onConfirmed = {
+                val tripId = synchronized(journalLock) { currentJournal?.tripId ?: "" }
+                ActivityLog.log("stop_confirmed", tripId)
+                if (settings.stopDetectionMode == StopDetection.SPLIT) {
+                    serviceScope.launch { finalizeCurrentJournal() }
+                }
+            },
+            onResumed = {
+                val tripId = synchronized(journalLock) { currentJournal?.tripId ?: "" }
+                ActivityLog.log("stop_resumed", tripId)
+                if (settings.stopDetectionMode == StopDetection.SPLIT) {
+                    // Motion after a split: open the continuation journal if
+                    // the session is still recording (same trigger context).
+                    serviceScope.launch {
+                        if (DrivingStatus.isLogging.value) {
+                            synchronized(journalLock) {
+                                if (currentJournal == null) createJournal(
+                                    settingsSnapshot(), DrivingStatus.triggeredBy.value
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            onClosed = { event ->
+                if (settings.stopDetectionMode == StopDetection.ANNOTATE) {
+                    journalStops.add(event)
+                    ActivityLog.log(
+                        "stop_recorded", "",
+                        "dur_s" to event.durationSec.toString(), "source" to event.source
+                    )
+                }
+            }
+        )
     }
 
     private fun logLocation(location: Location) {
@@ -576,9 +656,10 @@ class DrivingService : Service() {
             journal ?: return@launch
 
             try {
+                val nowMs = System.currentTimeMillis()
                 journal.append(
                     GpsRow(
-                        ts = System.currentTimeMillis(),
+                        ts = nowMs,
                         gpsTime = location.time,
                         latitude = location.latitude,
                         longitude = location.longitude,
@@ -588,6 +669,7 @@ class DrivingService : Service() {
                         accuracyM = if (location.hasAccuracy()) location.accuracy else 0f
                     )
                 )
+                stopDetector?.onGpsSample(nowMs, location.latitude, location.longitude, location.speed.toDouble())
                 fixSinceLogging = true
                 liveDistance.onGps(location.time, location.latitude, location.longitude, location.speed)
                 DrivingStatus.distanceM.value = liveDistance.bestMeters()
@@ -708,6 +790,7 @@ class DrivingService : Service() {
             lastObdValues = values
             DrivingStatus.obdValues.value = values
             liveDistance.onObdSpeed(cycleStart, values["0D"]?.let { it / 3.6 })
+            values["0D"]?.let { stopDetector?.onWheelSample(cycleStart, it) }
             maybePollOdometer(client, cycleStart)
             DrivingStatus.distanceM.value = liveDistance.bestMeters()
 
@@ -730,8 +813,39 @@ class DrivingService : Service() {
             pids = pollPidsFor(settings)
 
             val interval = settings.obdPollIntervalMs.coerceAtLeast(250).toLong()
-            val elapsed = System.currentTimeMillis() - cycleStart
-            delay((interval - elapsed).coerceAtLeast(50L))
+            if (settings.stopDetectionMode != StopDetection.OFF && interval > StopDetector.WHEEL_POLL_MS) {
+                // Stop detection needs 1 s wheel cadence whatever the user's
+                // logging interval is; bridge the gap with single-PID 0D polls.
+                wheelFastPoll(client, cycleStart + interval)
+            } else {
+                val elapsed = System.currentTimeMillis() - cycleStart
+                delay((interval - elapsed).coerceAtLeast(50L))
+            }
+        }
+    }
+
+    /**
+     * Single-PID 0D polls feeding the stop detector between full logging
+     * cycles, until [untilMs]. A missing answer (BusStopped/Timeout) is
+     * neither moving nor stopped: the detector freezes on stale data and
+     * GPS takes over once the stream crosses its staleness bound.
+     */
+    private suspend fun wheelFastPoll(client: Elm327Client, untilMs: Long) {
+        val pid = ObdPids.byHex("0D") ?: return
+        while (kotlin.coroutines.coroutineContext[Job]?.isActive != false) {
+            val wait = untilMs - System.currentTimeMillis()
+            if (wait <= 0) return
+            delay(wait.coerceAtMost(StopDetector.WHEEL_POLL_MS))
+            val response = try {
+                client.queryPid("0D")
+            } catch (e: java.io.IOException) {
+                throw e // reconnect, same as the full cycle
+            }
+            if (response is ObdResponse.Ok) {
+                ObdPids.parseValue(pid, response.dataHex)?.let {
+                    stopDetector?.onWheelSample(System.currentTimeMillis(), it)
+                }
+            }
         }
     }
 
@@ -782,6 +896,7 @@ class DrivingService : Service() {
         } ?: return
         journal.close()
         DrivingStatus.startedAtMs.value = null
+        val stops = drainJournalStops()
 
         serviceScope.launch {
             val store = journalStore() ?: run {
@@ -798,7 +913,7 @@ class DrivingService : Service() {
                     }
                     return@launch
                 }
-                finalizeTrip(store, trip, tripState = TripDatabase.STATE_PENDING)
+                finalizeTrip(store, trip, tripState = TripDatabase.STATE_PENDING, stops = stops)
                 // Long-lived services still get their daily snapshot on the
                 // first trip completion after the day mark.
                 runCatching {
@@ -820,7 +935,8 @@ class DrivingService : Service() {
         store: JournalStore,
         trip: OrphanTrip,
         relocate: Boolean = true,
-        tripState: String = TripDatabase.STATE_PENDING
+        tripState: String = TripDatabase.STATE_PENDING,
+        stops: List<StopEvent> = emptyList()
     ): FinalizeResult {
         val settings = settingsSnapshot()
         val db = Storage.metadataStore(this, settings)
@@ -880,6 +996,17 @@ class DrivingService : Service() {
             is FinalizeResult.Completed -> {
                 Log.i("DrivingService", "Trip ${result.label} converted (ods=${result.wroteOds} kmz=${result.kmzDayLabel})")
                 ActivityLog.log("trip_converted", result.label, "kmz" to (result.kmzDayLabel ?: "-"), "ods" to result.wroteOds.toString())
+                if (stops.isNotEmpty() && db != null && row != null) {
+                    // Stop annotations are journal truth as much as the CSVs:
+                    // rows survive even if output relocation later fails.
+                    runCatching { db.insertStops(row.id, stops) }
+                        .onFailure { Log.e("DrivingService", "Could not store stops for ${trip.name}", it) }
+                    runCatching {
+                        db.putMetric(row.id, "stop_count", "detector", stops.size.toDouble(), null)
+                        val idleSec = stops.sumOf { s -> s.durationSec }.toDouble()
+                        db.putMetric(row.id, "stop_time_s", "detector", idleSec, null)
+                    }
+                }
                 if (relocate) {
                     runCatching { store.relocate(trip, toArchive = true) }
                         .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to archive", it) }

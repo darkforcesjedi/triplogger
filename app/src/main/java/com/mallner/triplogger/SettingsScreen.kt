@@ -384,6 +384,34 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
             supporting = stringResource(R.string.settings_min_trip_entries_support),
             onApply = { coroutineScope.launch { appSettingsRepository.updateDiscardBelowEntries(it) } }
         )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(stringResource(R.string.settings_stop_detection), fontSize = 16.sp)
+        Text(
+            text = stringResource(R.string.settings_stop_detection_caption),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        val stopModes = listOf(
+            StopDetection.OFF to stringResource(R.string.settings_stop_mode_off),
+            StopDetection.ANNOTATE to stringResource(R.string.settings_stop_mode_annotate),
+            StopDetection.SPLIT to stringResource(R.string.settings_stop_mode_split)
+        )
+        stopModes.forEach { (mode, label) ->
+            UnitOption(
+                label = label,
+                selected = appSettings.stopDetectionMode == mode,
+                onSelect = { coroutineScope.launch { appSettingsRepository.updateStopDetectionMode(mode) } }
+            )
+        }
+        if (appSettings.stopDetectionMode != StopDetection.OFF) {
+            NumberField(
+                value = appSettings.stopMinDurationSec,
+                label = stringResource(R.string.settings_stop_min_duration),
+                supporting = stringResource(R.string.settings_stop_min_duration_support),
+                onApply = { coroutineScope.launch { appSettingsRepository.updateStopMinDurationSec(it) } }
+            )
+        }
         TextButton(
             enabled = appSettings.tempLocationUri.isNotEmpty() &&
                 (appSettings.generateKmz || appSettings.saveOds),

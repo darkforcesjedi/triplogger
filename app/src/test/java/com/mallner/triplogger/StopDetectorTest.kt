@@ -66,6 +66,8 @@ class StopDetectorTest {
         assertEquals(listOf("confirmed"), sink.events) // nothing before resume
         val resume = stopStart + 70_000
         wheel(d, resume, 10, 40.0)
+        assertEquals("held back for potential merge", 0, sink.closed.size)
+        d.finishTrip()
         assertEquals(1, sink.closed.size)
         val e = sink.closed[0]
         assertEquals(stopStart, e.startMs)
@@ -118,6 +120,7 @@ class StopDetectorTest {
         wheel(d, stopStart + 20_000, 2, 1.0) // below the abort threshold
         wheel(d, stopStart + 22_000, 45, 0.0)
         wheel(d, stopStart + 67_000, 5, 40.0)
+        d.finishTrip()
         assertEquals(1, sink.closed.size)
         assertEquals(stopStart, sink.closed[0].startMs)
     }
@@ -142,6 +145,7 @@ class StopDetectorTest {
         wheel(d, t + 10_000, 5, 0.0)
         assertEquals(0, sink.closed.size) // run resets on returning to zero
         wheel(d, t + 15_000, 5, 40.0)
+        d.finishTrip()
         assertEquals(1, sink.closed.size)
     }
 
@@ -156,6 +160,7 @@ class StopDetectorTest {
         gps(d, stopStart, 140, 0.0)
         val resume = stopStart + 140_000
         gps(d, resume, 30, 13.9)
+        d.finishTrip()
         assertEquals(1, sink.closed.size)
         val e = sink.closed[0]
         assertEquals("gps", e.source)
@@ -194,6 +199,7 @@ class StopDetectorTest {
         gps(d, stopStart + 131_000, 80, 0.0)
         val resume = stopStart + 211_000
         gps(d, resume, 30, 13.9)
+        d.finishTrip()
         assertEquals(1, sink.closed.size)
         assertEquals("wheel", sink.closed[0].source)
         assertEquals(stopStart, sink.closed[0].startMs)
@@ -233,6 +239,7 @@ class StopDetectorTest {
         val stopStart = base + 30_000
         wheel(d, stopStart, 70, 0.0)
         wheel(d, stopStart + 70_000, 10, 40.0)
+        d.finishTrip()
         assertEquals(1, sink.closed.size)
         assertNull(sink.closed[0].latitude)
     }
@@ -243,6 +250,71 @@ class StopDetectorTest {
         assertEquals(5, StopDetector.enforcedGpsIntervalSec(5))
         assertEquals(3, StopDetector.enforcedGpsIntervalSec(3))
         assertEquals(1, StopDetector.enforcedGpsIntervalSec(0))
+    }
+
+    // -------------------------------------------------- arming and stop merges
+
+    @Test
+    fun lingeringAtTripStartIsNotAStop() {
+        val sink = Sink()
+        val d = detector(sink)
+        // Sitting in the driveway past the dwell minimum BEFORE any movement:
+        wheel(d, base, 130, 0.0)
+        assertEquals(emptyList<String>(), sink.events) // never even confirmed
+        wheel(d, base + 130_000, 30, 40.0) // first movement arms
+        wheel(d, base + 160_000, 70, 0.0)
+        wheel(d, base + 230_000, 10, 40.0)
+        d.finishTrip()
+        assertEquals(1, sink.closed.size)
+        assertEquals(base + 160_000, sink.closed[0].startMs)
+    }
+
+    @Test
+    fun lingeringGpsStartNeedsMovementToArm() {
+        val sink = Sink()
+        val d = detector(sink)
+        gps(d, base, 130, 0.0) // stationary from session start: no window
+        gps(d, base + 130_000, 60, 13.9) // arms on raw fixes over 1 m/s
+        val stopStart = base + 190_000
+        gps(d, stopStart, 140, 0.0)
+        gps(d, stopStart + 140_000, 30, 13.9)
+        d.finishTrip()
+        assertEquals(1, sink.closed.size)
+        assertEquals("gps", sink.closed[0].source)
+    }
+
+    @Test
+    fun noiseBlipMidDwellMergesIntoOneStop() {
+        val sink = Sink()
+        val d = detector(sink)
+        wheel(d, base, 30, 40.0)
+        val stopStart = base + 30_000
+        wheel(d, stopStart, 70, 0.0)
+        val blip = stopStart + 70_000
+        wheel(d, blip, 3, 3.0) // sensor burst: technically ends stop #1
+        val stop2 = blip + 3_000
+        wheel(d, stop2, 70, 0.0) // re-confirm at the same place
+        wheel(d, stop2 + 70_000, 5, 40.0)
+        d.finishTrip()
+        assertEquals("one physical stop, one record", 1, sink.closed.size)
+        val e = sink.closed[0]
+        assertEquals(stopStart, e.startMs)
+        assertEquals(stop2 + 70_000, e.endMs) // the true resume
+    }
+
+    @Test
+    fun genuinelySeparateStopsStaySeparate() {
+        val sink = Sink()
+        val d = detector(sink)
+        wheel(d, base, 30, 40.0)
+        wheel(d, base + 30_000, 70, 0.0)
+        wheel(d, base + 100_000, 130, 40.0) // driving well beyond the merge gap
+        wheel(d, base + 230_000, 70, 0.0)
+        wheel(d, base + 300_000, 10, 40.0)
+        d.finishTrip()
+        assertEquals(2, sink.closed.size)
+        assertEquals(base + 30_000, sink.closed[0].startMs)
+        assertEquals(base + 230_000, sink.closed[1].startMs)
     }
 
     // ------------------------------------------------------- real-data replay

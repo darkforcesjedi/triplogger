@@ -71,40 +71,111 @@ multi-source output (leave legacy distance_m displayed until recomputed).
 
 ## Trip metadata database (foundation for categories + multi-select)
 
-Replace trip.properties entirely with one SQLite database stored in the
-journal root (beside pending/ success/ failed/, e.g. "triplogger.db"), so
-all trip state lives in exactly one place; two stores risk drift. The Trips
-tab renders from the DB, which is why folder enumeration disappears from the
-fast path.
+Replace trip.properties entirely with one SQLite database "triplogger.db"
+stored in the journal root (beside pending/ archive/ failed/), so all trip
+state lives in exactly one place; two stores risk drift. The Trips tab
+renders from the DB, which is why folder enumeration disappears from the
+fast path. Design agreed on 2026-11-14/15:
 
-- Migration: one-time scan imports every existing trip.properties into the
-  DB (keyed by the epoch track id, stable across renames), then the
-  properties files are deleted; after migration nothing reads or writes
-  them. Journals (gps/obd CSVs) remain the raw data as today.
-- Storage mechanics: open SQLite via the underlying filesystem path of the
-  selected SAF folder (primary external storage paths resolve; the app
-  already treats that folder as a normal directory); WAL mode.
+- Engine: plain SQLiteOpenHelper (no Room, no codegen). WAL mode; fall
+  back to journal_mode=TRUNCATE if WAL fails on the mounted storage and
+  record that in meta. Versioning via PRAGMA user_version, one
+  transaction per upgrade. A meta table keeps schema bookkeeping
+  (schema_migration, root_token UUID minted at DB creation so the app can
+  tell same-store-new-mount from fresh store, last_backup/restore stamps).
+- Identity: trips.id = epoch track id "t<start_ms>" (unique across DST
+  fall-back, rename-stable, already embedded in KMZ tracks). The current
+  folder name moves to trips.folder (UNIQUE); folders are never renamed
+  by the migration. updated_at everywhere; deleted_at reserved (NULL =
+  live) for a future trash/undo.
+- Tables:
+  trips(...) hot predicates as real columns: state
+    CHECK(state IN ('pending','archive','failed')), start_ms, end_ms,
+    entries, segments, pids (JSON), title, trigger, category_id,
+    place_start/place_end, tz_id/tz_offset_min/tz_name, distance_source,
+    raw_state, raw_purged_at, raw_bytes, raw_file_count, status_reason,
+    converted_at, app_version, samples_backend (default 'csv'),
+    created_at/updated_at/deleted_at. Indexes: start_ms DESC,
+    (state,start_ms DESC), category_id.
+  metrics(trip_id, kind, source, value REAL, note) PK(trip_id,kind,source)
+    - every measured/estimated value (distance per method, max speed,
+    duration, later stop_count/fuel/idle); new measures cost no schema.
+  trip_ext(trip_id, key, value, updated_at) - overflow KV; the migrator
+    parks any unrecognized property key here so future app versions can
+    adopt it instead of losing it.
+  categories(id, name UNIQUE NOCASE, color INT, created_at);
+    trips.category_id FK ON DELETE SET NULL (deleting a category nulls
+    it, matching the categories TODO).
+  outputs(trip_id, kind ('kmz_day'|'ods'|...), name, bytes, created_at) -
+    replaces kmz_day/ods_file columns.
+  odo_readings(trip_id, ts, km) PK(trip_id,ts) - mirrors odo.csv so the
+    DB can answer odometer continuity and per-stop mileage queries.
+  activity(id, ts, event, trip_id FK SET NULL, message, fields JSON) +
+    indexes (ts DESC), (event,ts DESC), (trip_id,ts DESC) - replaces
+    activity-log.jsonl (whole-file rewrites end; events correlate to
+    trips; share is a SELECT; events before the DB exists buffer in
+    memory until first open).
+  settings(key PK, value JSON, updated_at) - AppSettingsRepository
+    becomes a typed facade; one-time DataStore import on first launch,
+    DataStore is then deleted. Restoring the app = pick the journal
+    folder, re-pair Bluetooth: settings travel with the DB. Stale
+    device-local references self-heal (persisted SAF URIs validated with
+    takePersistableUriPermission; invalid ones clear and re-prompt). The
+    ONE preference that must stay device-local is journal_root_uri
+    itself (chicken and egg: the DB lives inside the root).
+  backups(name PK, created_at, bytes, integrity_ok, trips_at_backup,
+    error) - bookkeeping mirror; truth is the files in backups/.
+- Raw journals stay CSV files: the DB stores metadata, not samples
+  (multi-MB-per-trip data would collapse the move/backup design and a DB
+  corruption would lose every trip at once). trips.samples_backend and
+  a repository API returning measurement sequences keep the door open
+  for a future per-trip switch to DB-backed samples (parked schema:
+  gps_samples / obd_samples narrow tables, PK(trip_id,ts,seq,pid)); old
+  trips keep working either way.
+- Raw-data lifecycle: raw_state
+    present | purged_retention | purged_manual | missing, plus
+  raw_purged_at and a raw_bytes/raw_file_count snapshot taken at
+  conversion. Retention purge deletes folder files first, then updates
+  the row in one transaction (failed delete leaves 'present', retried);
+  reconciliation flags external deletions 'missing' (activity row) and
+  flips them back to 'present' if a folder reappears. Trip metadata,
+  metrics, categories and outputs outlive retention by default: the row
+  IS the permanent record; tiles show "raw data removed" and sample
+  reading actions (reprocess/rebuild) are enabled only when present.
+- Migration (dev-scale dataset, no legacy ceremony): one scan imports
+  every trip.properties (known keys to columns, distance_* to metrics
+  rows, unknown keys to trip_ext) and deletes the file; folders without
+  rows are always re-imported, so interrupted runs self-heal. Journals
+  (gps/obd CSVs) remain the raw data.
 - Storage re-pick moves the archive, it does not abandon it: if the old
-  journal root still exists and contains trips, prompt with Move (default)
-  / Copy / Leave behind. Move = copy trip folders first, then the DB last
-  (VACUUM INTO or post-copy integrity_check + row count vs folder count),
-  only then delete the old copies; interrupted runs are idempotent because
-  the DB lists what already landed. Copy yields two independent stores.
-  Leave behind creates the fresh DB at the new root. The old
+  journal root still exists and contains trips, prompt with Move
+  (default) / Copy / Leave behind. Move = copy trip folders first, then
+  the DB last (post-copy integrity_check + row count vs folder count),
+  only then delete the old copies; interrupted runs are idempotent
+  because the DB lists what already landed. Copy yields two independent
+  stores (root_tokens differ); Leave behind creates the fresh DB at the
+  new root and rows for left trips become 'missing'. The old
   silent-abandon behavior goes away with this item.
 - Crash safety moves from atomic property writes into transactions:
-  trip lifecycle rows commit around the folder move, and a startup
+  trip lifecycle rows commit around the folder moves, and a startup
   reconciliation scan repairs drift both ways (folder without row is
-  re-imported from journal names and CSV headers; row without folder gets
-  raw availability cleared).
-- Track raw availability per trip: when a trip row exists but its journal
-  folder is gone from the temp store (user deleted/moved it), the tile shows
-  a "raw data not found" indicator and reprocess/re-run are disabled; the
-  converted KMZ/ODS outputs remain listed.
-- DB corruption fallback: losing the DB never loses trip data (journals and
-  KMZ/ODS outputs are untouched); a rescan rebuilds rows from folder names,
-  CSV headers, and output listings, though free-form fields (titles,
-  categories) go with it, so the journal root belongs in backups.
+  re-imported from journal names and CSV headers; row without folder
+  gets raw_state adjusted).
+- Automatic backups (journal root backups/ folder, so they ride re-pick
+  and any file backup): VACUUM INTO a timestamped single-file snapshot
+  (API 24-26 fallback: wal_checkpoint(TRUNCATE) + file copy), verified
+  by opening the COPY read-only with PRAGMA integrity_check and a trips
+  row count - a corrupt live DB can never bless a backup. Triggers:
+  service start/daily when meta.db_dirty since the last good backup,
+  always before the migration run and before purge sweeps. Retention:
+  newest 8. Corruption at open never auto-restores: a dialog offers the
+  latest verified backup ("rolling back to yesterday's state"); after
+  restore the app writes a backup_restored activity row (backup name,
+  taken-at, restored-at) into the restored DB so the audit trail is
+  honest about its blind spot. Losing the DB never loses trip data
+  (journals and outputs are untouched; rescan rebuilds rows, though
+  free-form fields go back only as far as the last backup, so the
+  journal root belongs in backups).
 
 ## KMZ speed-plot PNG names should use the trip id
 
@@ -154,7 +225,7 @@ collapse older days by default.
 ## Trip detail sheet: theme polish
 
 The ModalBottomSheet uses raw theme colors; verify/adjust for light theme and
-One UI dynamic palettes: link blue on sheet surface, "—" placeholder color,
+One UI dynamic palettes: link blue on sheet surface, "-" placeholder color,
 stat-label contrast, badge colors, and the status_reason error line. Decide
 whether the tappable place line should look like a link (underline) rather
 than relying on color alone.

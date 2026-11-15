@@ -5,15 +5,30 @@ tags (v1.0 initial, v1.1 Live Updates, v1.2 Trips/Activity).
 
 ## Per-stop mileage tracking (delivery / rideshare use case)
 
-Trips only log Start/End today. To reconcile against Uber/DoorDash logs:
+Shipped core (v1.3): the stop detector and its two modes. Settings choose
+Off / Mark stops on trips / End trips at stops with a minimum dwell
+(default 120 s); enabling caps GPS logging at 5 s while recording and adds
+1 s wheel-speed (0D) polls between OBD log cycles. Wheel rules: exact 0
+km/h begins detection, 3 consecutive >0 scans abort or end (end = first
+of the three); GPS rules: dt-corrected EMA (tau 5 s), open below 0.6 m/s
+filtered, abort on 3 scans above 1.5 m/s, spatial census at confirm
+(>=90% of cached fixes within 25 m of the centroid), start backdated to
+the first raw sub-trigger sample. Parameters were tuned against 41 real
+archived trips (evaluation harness lived outside the repo; the replay
+guard for the key rule is a unit test). A dwell only records once motion
+resumes - a trip ending during a dwell records NO stop. Confirmed stops
+go to the database (stops table + stop_count/stop_time_s metrics,
+annotate mode) or split the trip (split mode); no stops.csv. The detail
+sheet lists recorded stops with map links.
 
-- Detect dwell periods while recording (speed < ~1 m/s for > N seconds,
-  configurable) and write them to the journal as stops
-  (start_ts, end_ts, lat, lon) in a `stops.csv` alongside gps/obd.
+Remaining for the delivery/rideshare reconciliation story:
+
 - Resolve stop placenames in the existing bulk Nominatim pass (never live:
-  the 1 req/s fair-use limit means lookups must stay batched at trip end).
-- Show stops in the trip detail sheet (collapsible list, each opening in
-  OSM); expose per-stop addresses in ODS export or a dedicated stops sheet.
+  the 1 req/s fair-use limit means lookups must stay batched at trip end);
+  show them beside the stop coordinates in the detail sheet.
+- Expose per-stop addresses in ODS export or a dedicated stops sheet.
+- Split-mode refinements: continued_from annotation on the continuation
+  trip row and a grouped view of segments belonging to one drive.
 - Interacts with discard-below-entries: a 20-stop delivery crawl is a
   legitimate trip even at low poll counts.
 

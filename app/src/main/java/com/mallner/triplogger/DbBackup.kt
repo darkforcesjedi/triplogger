@@ -63,6 +63,41 @@ object DbBackup {
             ?: emptyList()
 
     /**
+     * The newest usable snapshot NAME to offer a restore for, or null.
+     * Pure gating kept separate from the SQLite reads so it is unit
+     * tested: never offer a rollback that cannot fix the problem. A
+     * hand-copied journal folder missing from a healthy database is a
+     * MERGE problem, not a backup problem; offering restore there would
+     * blame the database forever and, once used, would roll the user
+     * back without ever absorbing the folder. When folders are on disk
+     * ([onDisk] non-empty), the backup must actually contain one of them
+     * ([coversBackup]). An empty [onDisk] (nothing readable, e.g. a fresh
+     * corrupt install) trusts the backup unconditionally.
+     */
+    internal fun restoreOfferName(newestName: String?, onDisk: Set<String>, coversBackup: Boolean): String? {
+        if (newestName == null) return null
+        if (onDisk.isNotEmpty() && !coversBackup) return null
+        return newestName
+    }
+
+    /**
+     * Whether the snapshot's trips table contains any of [folders]. A
+     * restore is only worth offering for folders the backup actually
+     * knows: hand-copied journals missing from a healthy database are a
+     * merge problem, and a rollback that does not contain the trip would
+     * warn about a "database issue" forever without fixing anything.
+     */
+    fun backupCoversAny(snapshot: File, folders: Set<String>): Boolean = runCatching {
+        if (!snapshot.isFile) return false
+        SQLiteDatabase.openDatabase(snapshot.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            db.rawQuery("SELECT folder FROM trips", null).use { c ->
+                while (c.moveToNext()) if (c.getString(0) in folders) return true
+            }
+        }
+        false
+    }.getOrDefault(false)
+
+    /**
      * Snapshot when the database changed since the last one and that is a
      * day old (first run counts: no timestamp means never backed up).
      */

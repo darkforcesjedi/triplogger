@@ -79,18 +79,19 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
     var message by remember { mutableStateOf<String?>(null) }
     var pendingOpen by remember { mutableStateOf(false) }
     var failedOpen by remember { mutableStateOf(false) }
-    var restorable by remember { mutableStateOf<List<String>>(emptyList()) }
+    var restoreName by remember { mutableStateOf<String?>(null) }
     var confirmRestore by remember { mutableStateOf(false) }
 
     LaunchedEffect(refreshKey) {
         val loaded = repository.load()
         entries = loaded
         // An empty list with storage set is the corruption signature;
-        // offer backups only then (cheap file listing, no DB needed).
-        restorable = if (loaded.isEmpty() && appSettings.tempLocationUri.isNotEmpty()) {
-            repository.restorableBackups()
+        // offer a restore only when a backup can actually fix it (the
+        // repository checks the backup contains one of the folders).
+        restoreName = if (loaded.isEmpty() && appSettings.tempLocationUri.isNotEmpty()) {
+            repository.restoreOffer()
         } else {
-            emptyList()
+            null
         }
     }
 
@@ -121,11 +122,12 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
         // ------------------------------------------------------------ archive
         val archive = list.filter { it.section == TripSection.ARCHIVE }
         if (archive.isEmpty()) {
-            if (restorable.isNotEmpty()) {
+            val offer = restoreName
+            if (offer != null) {
                 Text(stringResource(R.string.trips_db_damaged), color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    stringResource(R.string.trips_db_damaged_body, restorable.first()),
+                    stringResource(R.string.trips_db_damaged_body, offer),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -267,14 +269,14 @@ fun TripsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSetting
         )
     }
 
-    if (confirmRestore && restorable.isNotEmpty()) {
-        val name = restorable.first()
+    if (confirmRestore && restoreName != null) {
+        val name = restoreName!!
         AlertDialog(
             onDismissRequest = { confirmRestore = false },
             title = { Text(stringResource(R.string.trips_restore_title, name)) },
             text = { Text(stringResource(R.string.trips_restore_body)) },
             confirmButton = {
-                DialogActionButton(stringResource(R.string.trips_restore_action)) {
+                DialogActionButton(stringResource(R.string.trips_restore_continue)) {
                     coroutineScope.launch {
                         val outcome = repository.restoreBackup(name)
                         confirmRestore = false

@@ -192,6 +192,22 @@ fast path. Design agreed on 2026-11-14/15:
   the SAME DB is kept while folders stay behind); per-trip DB-backed
   samples remain the parked door.
 
+## Merge a copied journal folder into the current database
+
+Users import data by copying trip journal folders into the journal root
+by hand. Reconciliation only creates a minimal row for such a folder
+(name-derived): titles, metrics and outputs have no path back into the
+database, and the user has no way to finish the import. Ship a merge
+action: read the unknown folder (CSVs plus any trip.properties) and
+upsert the row, metrics and outputs keyed by folder name; idempotent,
+never deletes the source, richer values win on conflict. Surface it as
+"this folder is not in your database - Merge" rather than leaving
+restores as the only lever. Until merge exists, the restore card must
+NOT offer a rollback for hand-imported folders: the offer is gated on
+the backup actually containing one of the folders on disk
+(DbBackup.backupCoversAny), otherwise a healthy database with copied-in
+folders would be blamed forever.
+
 ## KMZ speed-plot PNG names should use the trip id
 
 Placemark images are named "<wall-clock label>.png" (e.g. "2026-11-05

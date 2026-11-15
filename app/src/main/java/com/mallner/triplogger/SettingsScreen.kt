@@ -428,13 +428,17 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                     Text(stringResource(R.string.settings_relocate_body, analysis.trips))
                     Spacer(Modifier.height(8.dp))
                     Text(stringResource(R.string.settings_relocate_hint), fontSize = 13.sp)
-                    TextButton(onClick = { switchJournal(move = null) }) {
-                        Text(stringResource(R.string.settings_relocate_leave))
-                    }
                 }
             },
-            confirmButton = { DialogActionButton(stringResource(R.string.settings_relocate_move)) { switchJournal(move = true) } },
-            dismissButton = { DialogActionButton(stringResource(R.string.settings_relocate_copy)) { switchJournal(move = false) } }
+            confirmButton = {
+                // Three mutually exclusive outcomes on one line; tapping
+                // outside cancels without switching.
+                Row {
+                    DialogActionButton(stringResource(R.string.settings_relocate_leave)) { switchJournal(move = null) }
+                    DialogActionButton(stringResource(R.string.settings_relocate_copy)) { switchJournal(move = false) }
+                    DialogActionButton(stringResource(R.string.settings_relocate_move)) { switchJournal(move = true) }
+                }
+            }
         )
     }
     collisionPrompt?.let {

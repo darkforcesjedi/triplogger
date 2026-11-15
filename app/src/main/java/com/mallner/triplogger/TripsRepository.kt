@@ -178,17 +178,29 @@ class TripsRepository(private val context: Context) {
     }
 
     /**
-     * Restorable snapshot names (newest first), non-empty only when a
-     * journal is configured, its database cannot be opened, and backups/
-     * holds files. Drives the restore card on the Trips tab (Stage C).
+     * Filename of the snapshot a restore would offer, or null. Non-null
+     * only when a journal is configured, its database cannot be opened,
+     * backups/ holds files, AND the newest backup actually contains at
+     * least one of the journal folders on disk: never offer a rollback
+     * that cannot fix the problem the user is seeing (a folder that was
+     * hand-copied into the journal is a merge case, not a backup case).
      */
-    suspend fun restorableBackups(): List<String> = withContext(Dispatchers.IO) {
+    suspend fun restoreOffer(): String? = withContext(Dispatchers.IO) {
         val settings = snapshot()
-        if (settings.tempLocationUri.isEmpty()) return@withContext emptyList()
-        if (Storage.metadataStore(context, settings) != null) return@withContext emptyList()
-        val root = JournalPath.rootDir(settings.tempLocationUri)
-            ?: return@withContext emptyList()
-        DbBackup.availableBackups(root).map { it.name }
+        if (settings.tempLocationUri.isEmpty()) return@withContext null
+        if (Storage.metadataStore(context, settings) != null) return@withContext null
+        val root = JournalPath.rootDir(settings.tempLocationUri) ?: return@withContext null
+        val newest = DbBackup.availableBackups(root).firstOrNull()
+        val onDisk = buildSet {
+            for (state in listOf(
+                TripDatabase.STATE_ARCHIVE, TripDatabase.STATE_PENDING, TripDatabase.STATE_FAILED
+            )) {
+                java.io.File(root, state).listFiles()?.filter { it.isDirectory }
+                    ?.forEach { add(it.name) }
+            }
+        }
+        val covers = newest != null && onDisk.isNotEmpty() && DbBackup.backupCoversAny(newest, onDisk)
+        DbBackup.restoreOfferName(newest?.name, onDisk, covers)
     }
 
     suspend fun restoreBackup(name: String): DbBackup.Outcome = withContext(Dispatchers.IO) {

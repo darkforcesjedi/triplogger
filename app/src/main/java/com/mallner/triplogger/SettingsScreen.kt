@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -108,7 +109,61 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
         }
     val kmzPicker = pickFolder { appSettingsRepository.updateKmzLocationUri(it) }
     val odsPicker = pickFolder { appSettingsRepository.updateOdsLocationUri(it) }
-    val tempPicker = pickFolder { appSettingsRepository.updateTempLocationUri(it) }
+
+    // ------------------------------------------------- journal re-pick (Stage C4)
+    var relocatePrompt by remember { mutableStateOf<Pair<String, JournalRelocation.Analysis>?>(null) }
+    var collisionPrompt by remember { mutableStateOf<String?>(null) }
+    var relocating by remember { mutableStateOf(false) }
+    val isLogging by DrivingStatus.isLogging.collectAsState()
+
+    fun switchJournal(move: Boolean?) {
+        val newUri = when (val p = relocatePrompt) {
+            null -> collisionPrompt ?: return
+            else -> p.first
+        }
+        val oldUri = appSettings.tempLocationUri
+        val wasCollision = collisionPrompt != null
+        relocatePrompt = null
+        collisionPrompt = null
+        relocating = true
+        coroutineScope.launch {
+            val outcome = switchJournalFolder(context, appSettingsRepository, oldUri, newUri, move)
+            relocating = false
+            val text = when {
+                // Partial failures must not be reported as clean moves:
+                // the source is always left intact, the destination has
+                // what could be read.
+                outcome?.clean == false -> R.string.settings_relocate_failed
+                wasCollision -> R.string.settings_relocate_switched
+                move == true -> R.string.settings_relocate_moved
+                move == false -> R.string.settings_relocate_copied
+                else -> R.string.settings_relocate_left
+            }
+            android.widget.Toast.makeText(context, context.getString(text, outcome?.failed?.joinToString(", ").orEmpty()), android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val tempPicker = pickFolder { uri ->
+        val analysis = JournalRelocation.analyze(appSettings.tempLocationUri, uri)
+        when (analysis.what) {
+            JournalRelocation.What.NONE, JournalRelocation.What.SAME_ROOT ->
+                coroutineScope.launch { switchJournalFolder(context, appSettingsRepository, appSettings.tempLocationUri, uri, null) }
+            JournalRelocation.What.RELOCATE -> {
+                if (isLogging) {
+                    android.widget.Toast.makeText(context, R.string.settings_relocate_recording, android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    relocatePrompt = uri to analysis
+                }
+            }
+            JournalRelocation.What.COLLISION -> {
+                if (isLogging) {
+                    android.widget.Toast.makeText(context, R.string.settings_relocate_recording, android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    collisionPrompt = uri
+                }
+            }
+        }
+    }
 
     Column(modifier = modifier
         .padding(16.dp)
@@ -360,6 +415,44 @@ fun SettingsScreen(modifier: Modifier = Modifier, appSettingsRepository: AppSett
                 }
             },
             dismissButton = { DialogActionButton(stringResource(R.string.action_cancel)) { showRebuildConfirm = false } }
+        )
+    }
+
+    // ----------------------------------------------------- re-pick dialogs (C4)
+    relocatePrompt?.let { (newUri, analysis) ->
+        AlertDialog(
+            onDismissRequest = { relocatePrompt = null },
+            title = { Text(stringResource(R.string.settings_relocate_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.settings_relocate_body, analysis.trips))
+                    Spacer(Modifier.height(8.dp))
+                    Text(stringResource(R.string.settings_relocate_hint), fontSize = 13.sp)
+                    TextButton(onClick = { switchJournal(move = null) }) {
+                        Text(stringResource(R.string.settings_relocate_leave))
+                    }
+                }
+            },
+            confirmButton = { DialogActionButton(stringResource(R.string.settings_relocate_move)) { switchJournal(move = true) } },
+            dismissButton = { DialogActionButton(stringResource(R.string.settings_relocate_copy)) { switchJournal(move = false) } }
+        )
+    }
+    collisionPrompt?.let {
+        AlertDialog(
+            onDismissRequest = { collisionPrompt = null },
+            title = { Text(stringResource(R.string.settings_collision_title)) },
+            text = { Text(stringResource(R.string.settings_collision_body)) },
+            confirmButton = { DialogActionButton(stringResource(R.string.settings_collision_switch)) { switchJournal(move = null) } },
+            dismissButton = { DialogActionButton(stringResource(R.string.action_cancel)) { collisionPrompt = null } }
+        )
+    }
+    if (relocating) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text(stringResource(R.string.settings_relocate_busy_title)) },
+            text = { Text(stringResource(R.string.settings_relocate_busy)) },
+            confirmButton = { },
+            dismissButton = { }
         )
     }
 
@@ -808,4 +901,44 @@ private fun displayPath(context: android.content.Context, uri: String): String =
         }
         decoded.removePrefix("primary:").removePrefix("raw:")
     }
+}
+
+/**
+ * Switch to a new journal folder (Stage C4). The old journal database is
+ * closed BEFORE its files move (releases handles and checkpoints the WAL,
+ * so copies and renames see complete data); the settings mirror updates
+ * and the caches re-attach at the new location afterwards.
+ * [move]: true moves the journal, false copies it, null leaves it behind.
+ */
+private suspend fun switchJournalFolder(
+    context: Context,
+    repository: AppSettingsRepository,
+    oldUri: String,
+    newUri: String,
+    move: Boolean?
+): JournalRelocation.Outcome? {
+    if (oldUri.isEmpty() || oldUri == newUri) {
+        if (repository.appSettingsFlow.first().tempLocationUri != newUri) {
+            repository.updateTempLocationUri(newUri)
+        }
+        return null
+    }
+    if (move == false) {
+        // The copy source must be WAL-checkpointed to be complete.
+        runCatching { Storage.metadataStore(context, oldUri)?.checkpointWal() }
+    }
+    Storage.dropMetadataStore(oldUri)
+    SettingsDb.clearAttachment()
+    ActivityLog.clearAttachment()
+    val outcome = if (move != null) JournalRelocation.execute(oldUri, newUri, copy = !move) else null
+    // A relocation with failures must NOT switch: an incomplete copy or an
+    // unverified move leaves the old journal live and complete, and
+    // re-running the choice is idempotent.
+    if (outcome != null && !outcome.clean) {
+        SettingsDb.ensureAttached(context, repository.appSettingsFlow.first())
+        return outcome
+    }
+    repository.updateTempLocationUri(newUri)
+    SettingsDb.ensureAttached(context, repository.appSettingsFlow.first())
+    return outcome
 }

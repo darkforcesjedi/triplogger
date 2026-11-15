@@ -12,15 +12,16 @@ import kotlinx.coroutines.launch
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            val appSettingsRepository = AppSettingsRepository(context)
-            CoroutineScope(Dispatchers.IO).launch {
-                val settings = appSettingsRepository.appSettingsFlow.first()
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // goAsync keeps the broadcast (and its service-start eligibility
+        // window) alive while the settings read completes; launching a
+        // detached coroutine and returning used to hand the process back to
+        // "background", where Android 14+ rejects the start outright.
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val settings = AppSettingsRepository(context).appSettingsFlow.first()
                 if (settings.serviceEnabled && settings.tempLocationUri.isNotEmpty()) {
-                    // startForegroundService, not startService: by the time
-                    // the settings read completes the process is no longer
-                    // exempt from background-start limits (the plain call
-                    // crashed the app with BackgroundServiceStartNotAllowed).
                     runCatching {
                         ContextCompat.startForegroundService(
                             context, Intent(context, DrivingService::class.java)
@@ -31,6 +32,10 @@ class BootReceiver : BroadcastReceiver() {
                         Log.w("BootReceiver", "Boot start refused; service starts with the app", it)
                     }
                 }
+            } catch (e: Exception) {
+                Log.e("BootReceiver", "Boot handling failed", e)
+            } finally {
+                pending.finish()
             }
         }
     }

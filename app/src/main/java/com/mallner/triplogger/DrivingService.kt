@@ -70,6 +70,9 @@ class DrivingService : Service() {
     private val recovering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val recoveryAttempted = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** True while booted armed under specialUse, awaiting a sanctioned promotion. */
+    private var pendingTypePromotion = false
+
     @Volatile private var lastSettings: AppSettings? = null
 
     private fun settingsSnapshot(): AppSettings = kotlinx.coroutines.runBlocking {
@@ -113,14 +116,59 @@ class DrivingService : Service() {
         }
     }
 
+    private fun triggerMatches(pattern: String, name: String?): Boolean =
+        triggerNameMatches(pattern, name)
+
+    /** The while-in-use types used once a sanctioned event (UI, ACL) is in play. */
+    private fun fullFgsTypes(): Int =
+        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+
     /**
-     * The trigger setting is a pipe-separated list of name fragments,
-     * e.g. "ford|car box|chev" (case-insensitive substring match).
+     * Enter the foreground, degrading gracefully: boot is not a sanctioned
+     * moment for the while-in-use location/connectedDevice types on Android
+     * 14+, so a SecurityException there falls back to specialUse (or the
+     * legacy call pre-34) and leaves [pendingTypePromotion] set. The moment
+     * logging actually starts from a sanctioned event we promote to the
+     * full types. Any OEM that refuses types entirely still gets the
+     * legacy untyped foreground service.
      */
-    private fun triggerMatches(pattern: String, name: String?): Boolean {
-        if (name == null || pattern.isBlank()) return false
-        return pattern.split('|').any { token ->
-            token.isNotBlank() && name.contains(token.trim(), ignoreCase = true)
+    private fun enterForeground(notification: android.app.Notification) {
+        val id = notificationManager.notificationID()
+        try {
+            ServiceCompat.startForeground(this, id, notification, fullFgsTypes())
+            return
+        } catch (e: Exception) {
+            Log.w("DrivingService", "while-in-use FGS types refused (not a sanctioned start?)", e)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                ServiceCompat.startForeground(
+                    this, id, notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+                pendingTypePromotion = true
+                return
+            } catch (e: Exception) {
+                Log.w("DrivingService", "specialUse FGS refused; using legacy call", e)
+            }
+        }
+        @Suppress("DEPRECATION")
+        runCatching { startForeground(id, notification) }
+            .onFailure { Log.e("DrivingService", "Could not enter foreground", it) }
+    }
+
+    /** Promote a boot-armed specialUse service to the real types when sanctioned. */
+    private fun promoteForegroundIfNeeded(notification: android.app.Notification) {
+        if (!pendingTypePromotion) return
+        pendingTypePromotion = false
+        runCatching {
+            ServiceCompat.startForeground(
+                this, notificationManager.notificationID(), notification, fullFgsTypes()
+            )
+        }.onFailure {
+            Log.w("DrivingService", "FGS type promotion refused", it)
+            pendingTypePromotion = true // retry at the next sanctioned moment
         }
     }
 
@@ -249,20 +297,7 @@ class DrivingService : Service() {
         val initialNotification = notificationManager.buildInitialNotification(
             getString(R.string.service_enabled), getString(R.string.awaiting_bluetooth_connection)
         )
-        try {
-            ServiceCompat.startForeground(
-                this,
-                notificationManager.notificationID(),
-                initialNotification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } catch (e: Exception) {
-            // Some OEMs reject certain foreground service types; fall back to the legacy call
-            Log.w("DrivingService", "startForeground with types failed", e)
-            @Suppress("DEPRECATION")
-            startForeground(notificationManager.notificationID(), initialNotification)
-        }
+        enterForeground(initialNotification)
 
         val bluetoothManager: BluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
@@ -350,6 +385,9 @@ class DrivingService : Service() {
             getString(R.string.awaiting_bluetooth_connection)
         )
         notificationManager.notify(notificationManager.notificationID(), notification)
+        // If boot armed us under specialUse, this is a sanctioned moment (the
+        // app is visible, or the trigger's ACL_CONNECTED just woke us).
+        promoteForegroundIfNeeded(notification)
 
         createJournal(settings, DrivingStatus.triggeredBy.value)
         if (settings.gpsEnabled) {

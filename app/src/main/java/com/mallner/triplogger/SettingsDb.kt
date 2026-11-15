@@ -185,6 +185,7 @@ internal object SettingsDb {
             Storage.metadataStore(context, current.tempLocationUri)
         } ?: return
         attachFor(store, current)
+        ActivityLog.attachFor(store)
     }
 
     /** No-op when this exact store is already attached (root changes re-attach). */

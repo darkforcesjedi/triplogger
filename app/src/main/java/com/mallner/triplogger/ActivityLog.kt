@@ -35,6 +35,23 @@ object ActivityLog {
 
     private val timeFormat = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
 
+    // Trip ids arrive in message/field text in two historical shapes: the
+    // journal folder name "20261106_221901" and the display label
+    // "2026-11-06 22.19.01". Both are rewritten to one readable form at read
+    // time so old entries render consistently too.
+    private val labelTimestamps = Regex("""\b(\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})\.(\d{2})\b""")
+    private val folderTimestamps = Regex("""(?<=\D|^)(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?=\D|$)""")
+
+    internal fun normalizeTimestamps(text: String): String {
+        var out = labelTimestamps.replace(text) { m ->
+            "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]} ${m.groupValues[4]}:${m.groupValues[5]}:${m.groupValues[6]}"
+        }
+        out = folderTimestamps.replace(out) { m ->
+            "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]} ${m.groupValues[4]}:${m.groupValues[5]}:${m.groupValues[6]}"
+        }
+        return out
+    }
+
     private var file: File? = null
     private val events = MutableStateFlow<List<Event>>(emptyList())
     val recent: StateFlow<List<Event>> = events.asStateFlow()
@@ -73,10 +90,10 @@ object ActivityLog {
                 try {
                     val o = JSONObject(line)
                     val event = o.getString("e")
-                    val message = o.optString("m", "")
+                    val message = normalizeTimestamps(o.optString("m", ""))
                     val fields = o.keys().asSequence()
                         .filter { it != "t" && it != "e" && it != "m" }
-                        .associateWith { o.get(it).toString() }
+                        .associateWith { normalizeTimestamps(o.get(it).toString()) }
                     Event(o.getLong("t"), event, message, fields)
                 } catch (_: Exception) {
                     null

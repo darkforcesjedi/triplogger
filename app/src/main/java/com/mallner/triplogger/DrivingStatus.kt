@@ -28,6 +28,13 @@ object DrivingStatus {
     val startedAtMs = MutableStateFlow<Long?>(null)
     val lastLocation = MutableStateFlow<Location?>(null)
     val isObdConnected = MutableStateFlow(false)
+
+    /**
+     * Live distance of the current trip in meters (best available estimate:
+     * odometer delta, else OBD wheel-speed integral, else GPS speed integral),
+     * null before the first usable sample.
+     */
+    val distanceM = MutableStateFlow<Double?>(null)
     val obdValues = MutableStateFlow<Map<String, Double?>>(emptyMap())
     val obdStatusText = MutableStateFlow<String?>(null)
 

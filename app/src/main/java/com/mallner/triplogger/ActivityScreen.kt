@@ -126,6 +126,7 @@ private fun eventLabel(event: String): String {
         "obd_connected" -> R.string.activity_event_obd_connected
         "obd_lost" -> R.string.activity_event_obd_lost
         "obd_timeout" -> R.string.activity_event_obd_timeout
+        "obd_odo_unsupported" -> R.string.activity_event_obd_odo_unsupported
         "journal_split" -> R.string.activity_event_journal_split
         "rebuild_run" -> R.string.activity_event_rebuild_run
         "failed_cleared" -> R.string.activity_event_failed_cleared

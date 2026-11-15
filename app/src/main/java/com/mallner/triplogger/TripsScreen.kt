@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -263,11 +264,13 @@ private fun TripRow(trip: TripEntry, usUnits: Boolean, onClick: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(trip.displayTitle, fontSize = 15.sp, fontWeight = if (trip.title != null) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 val stats = listOfNotNull(
-                    if (trip.distanceM.isNaN()) null else stringResource(
-                        R.string.trips_distance_value,
-                        "%.1f".format(UnitFormat.convert("km", trip.distanceM / 1000.0, usUnits).first),
-                        stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km)
-                    ),
+                    trip.bestDistanceM?.let {
+                        stringResource(
+                            R.string.trips_distance_value,
+                            "%.1f".format(UnitFormat.convert("km", it / 1000.0, usUnits).first),
+                            stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km)
+                        )
+                    },
                     trip.entries.takeIf { it > 0 }
                         ?.let { pluralStringResource(R.plurals.notification_entries, it, it) }
                 ).joinToString(" · ").ifEmpty { "—" }
@@ -376,6 +379,46 @@ private fun TripDetail(
             stringResource(R.string.trips_stat_segments), if (trip.segments > 0) trip.segments.toString() else "—",
             stringResource(R.string.trips_stat_trigger), trip.trigger ?: "—"
         )
+
+        // Every distance method that had data, hidden behind a link so the
+        // headline stays the single best estimate (audit trail for expense reports).
+        if (trip.distanceSources.size > 1) {
+            var showAllDistances by remember { mutableStateOf(false) }
+            TextButton(
+                onClick = { showAllDistances = !showAllDistances },
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.padding(top = 4.dp)
+            ) {
+                Text(
+                    stringResource(R.string.trips_distance_all_toggle, trip.distanceSources.size),
+                    fontSize = 13.sp
+                )
+            }
+            if (showAllDistances) {
+                trip.distanceSources.entries.sortedBy {
+                    listOf(DistanceEstimators.SOURCE_ODO, DistanceEstimators.SOURCE_OBD,
+                        DistanceEstimators.SOURCE_GPS_SPEED, DistanceEstimators.SOURCE_TRACK).indexOf(it.key)
+                }.forEach { (source, meters) ->
+                    val value = UnitFormat.convert("km", meters / 1000.0, usUnits).first
+                    Row(modifier = Modifier.padding(vertical = 1.dp)) {
+                        Text(
+                            stringResource(distanceSourceLabel(source)),
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            stringResource(
+                                R.string.trips_distance_value,
+                                "%.1f".format(value),
+                                stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km)
+                            ) + if (source == trip.distanceSrc) "  ★" else "",
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
 
         trip.statusReason?.let {
             Spacer(Modifier.height(12.dp))
@@ -506,7 +549,23 @@ private fun Stat(label: String, value: String, modifier: Modifier) {
 
 @Composable
 private fun formatDistance(trip: TripEntry, usUnits: Boolean): String {
-    if (trip.distanceM.isNaN()) return "—"
-    val value = UnitFormat.convert("km", trip.distanceM / 1000.0, usUnits).first
-    return stringResource(R.string.trips_distance_value, "%.1f".format(value), stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km))
+    val meters = trip.bestDistanceM ?: return "—"
+    val value = UnitFormat.convert("km", meters / 1000.0, usUnits).first
+    val headline = stringResource(
+        R.string.trips_distance_value,
+        "%.1f".format(value),
+        stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km)
+    )
+    // Name the source when several methods agree to disagree.
+    val src = trip.distanceSrc?.takeIf { trip.distanceSources.size > 1 }
+    return if (src == null) headline
+    else "$headline (${stringResource(distanceSourceLabel(src))})"
+}
+
+@Composable
+private fun distanceSourceLabel(source: String): Int = when (source) {
+    DistanceEstimators.SOURCE_ODO -> R.string.trips_distance_src_odo
+    DistanceEstimators.SOURCE_OBD -> R.string.trips_distance_src_obd
+    DistanceEstimators.SOURCE_GPS_SPEED -> R.string.trips_distance_src_gps_speed
+    else -> R.string.trips_distance_src_track
 }

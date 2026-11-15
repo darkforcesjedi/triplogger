@@ -90,10 +90,13 @@ class LiveJournal(
     val tripId: String,
     val startMs: Long,
     val pids: List<String>,
-    private val openSegment: (Int) -> Pair<OutputStream, OutputStream>
+    private val openSegment: (Int) -> Pair<OutputStream, OutputStream>,
+    /** Opens the odometer stream lazily; null when odometer polling is unavailable. */
+    private val openOdo: (() -> OutputStream)? = null
 ) {
     private var gpsWriter: RowWriter
     private var obdWriter: RowWriter
+    private var odoWriter: RowWriter? = null
     private var closed = false
 
     /** 0-based index of the segment currently being written. */
@@ -115,6 +118,7 @@ class LiveJournal(
     companion object {
         const val GPS_HEADER = "ts,gps_time,latitude,longitude,altitude,speed_mps,bearing,accuracy_m,tz_offset_min"
         const val OBD_HEADER_PREFIX = "ts,gps_time,latitude,longitude,altitude"
+        const val ODO_HEADER = "ts,odometer_km"
         const val TZ_COLUMN = "tz_offset_min"
         fun obdHeader(pids: List<String>): String {
             val pidsPart = if (pids.isEmpty()) "" else "," + pids.joinToString(",")
@@ -190,11 +194,35 @@ class LiveJournal(
         entriesWritten++
     }
 
+    /**
+     * Append one accepted dashboard odometer reading (km). Persisted as it
+     * arrives so a crash or ignition-off mid-trip still leaves the delta
+     * computable. Not counted in [entriesWritten] (odometer polls ride the
+     * poll loop on their own cadence, they are not logging ticks).
+     */
+    fun appendOdometer(ts: Long, odometerKm: Double) {
+        if (closed) return
+        try {
+            val writer = odoWriter ?: openOdo?.let { RowWriter(it()) } ?: return
+            if (odoWriter == null) {
+                writer.write(ODO_HEADER + "\n")
+                odoWriter = writer
+            }
+            val line = "$ts,${TripFormats.num(odometerKm, 1)}\n"
+            writer.write(line)
+            totalBytes += line.length
+        } catch (_: Exception) {
+            // Best effort: a lost reading only costs odometer precision;
+            // the finalizer works from whatever survived.
+        }
+    }
+
     fun close() {
         if (closed) return
         closed = true
         gpsWriter.closeQuietly()
         obdWriter.closeQuietly()
+        odoWriter?.closeQuietly()
     }
 }
 
@@ -322,6 +350,34 @@ abstract class OrphanTrip(val name: String) {
         return rows
     }
 
+    /** Accepted odometer readings (ts, km) in chronological order; empty when the car never answered A6. */
+    fun readOdoReadings(): List<Pair<Long, Double>> {
+        val text = readText("odo.csv") ?: return emptyList()
+        return text.lineSequence().drop(1).mapNotNull { line ->
+            val c = line.split(',')
+            val ts = c.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            val km = c.getOrNull(1)?.toDoubleOrNull() ?: return@mapNotNull null
+            Pair(ts, km)
+        }.toList()
+    }
+
+    /** Multi-source distance results persisted at finalization (source -> meters). */
+    fun distanceEstimates(): Map<String, Double> {
+        val known = setOf(
+            DistanceEstimators.SOURCE_ODO, DistanceEstimators.SOURCE_OBD,
+            DistanceEstimators.SOURCE_GPS_SPEED, DistanceEstimators.SOURCE_TRACK
+        )
+        return readProps().mapNotNull { (k, v) ->
+            if (!k.startsWith("distance_") || k == "distance_m") return@mapNotNull null
+            val source = k.removePrefix("distance_").removeSuffix("_m")
+            if (source !in known) return@mapNotNull null
+            v.toDoubleOrNull()?.let { Pair(source, it) }
+        }.toMap()
+    }
+
+    /** Best source label (odo|obd|gps_speed|track), null for legacy trips. */
+    fun distanceSrc(): String? = readProps()["distance_src"]?.takeIf { it.isNotEmpty() }
+
     fun readObdRows(pids: List<String>): List<ObdRow> {
         val rows = ArrayList<ObdRow>()
         for (segment in segments("obd")) {
@@ -418,12 +474,14 @@ class FileJournalStore(private val root: File) : JournalStore {
                 if (trigger.isNotEmpty()) append("trigger=").append(trigger).append('\n')
             }
         )
-        return LiveJournal(tripId, startMs, pids) { index ->
+        return LiveJournal(tripId, startMs, pids, { index ->
             Pair(
                 BufferedOutputStream(FileOutputStream(File(dir, segmentName("gps", index)), false), 4096),
                 BufferedOutputStream(FileOutputStream(File(dir, segmentName("obd", index)), false), 4096)
             )
-        }
+        }, openOdo = {
+            BufferedOutputStream(FileOutputStream(File(dir, "odo.csv"), true), 1024)
+        })
     }
 
     override fun unfinishedTrips(): List<OrphanTrip> {

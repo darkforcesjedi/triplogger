@@ -54,13 +54,17 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
 
         // Segment files are created lazily: index 0 when the journal opens,
         // higher indices on each split().
-        return LiveJournal(tripId, startMs, pids) { index ->
+        return LiveJournal(tripId, startMs, pids, { index ->
             val gpsFile = dir.createFile("text/csv", segmentName("gps", index))
                 ?: throw IOException("Cannot create gps segment $index")
             val obdFile = dir.createFile("text/csv", segmentName("obd", index))
                 ?: throw IOException("Cannot create obd segment $index")
             Pair(openAppendStream(gpsFile), openAppendStream(obdFile))
-        }
+        }, openOdo = {
+            val odoFile = dir.findFile("odo.csv") ?: dir.createFile("text/csv", "odo.csv")
+                ?: throw IOException("Cannot create odo.csv")
+            openAppendStream(odoFile)
+        })
     }
 
     private fun openAppendStream(doc: DocumentFile) =

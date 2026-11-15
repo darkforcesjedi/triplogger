@@ -50,6 +50,7 @@
     <string name="home_light_triggered">Logging - triggered by \"%1$s\"</string>
     <string name="home_recording">Recording Started: %1$s</string>
     <string name="home_no_trip">No trip in progress</string>
+    <string name="home_distance_covered">Trip distance: %1$s %2$s</string>
     <string name="home_new_trip">Start a new trip log</string>
 
     <!-- Home: status tiles -->
@@ -199,6 +200,11 @@
     <string name="trips_stat_segments">Segments</string>
     <string name="trips_stat_trigger">Trigger</string>
     <string name="trips_distance_value">%1$s %2$s</string>
+    <string name="trips_distance_all_toggle">All %1$d distance estimates</string>
+    <string name="trips_distance_src_odo">Odometer</string>
+    <string name="trips_distance_src_obd">Wheel speed (OBD)</string>
+    <string name="trips_distance_src_gps_speed">GPS speed</string>
+    <string name="trips_distance_src_track">GPS track</string>
 
     <!-- Activity tab -->
     <string name="activity_title">Activity</string>
@@ -228,6 +234,7 @@
     <string name="activity_event_trip_renamed">Renamed</string>
     <string name="activity_event_places_resolved">Placenames resolved</string>
     <string name="activity_event_obd_connected">OBD connected</string>
+    <string name="activity_event_obd_odo_unsupported">Dashboard odometer not available on this car</string>
     <string name="activity_event_obd_lost">OBD connection lost</string>
     <string name="activity_event_obd_timeout">OBD timeout</string>
     <string name="activity_event_journal_split">Journal split</string>

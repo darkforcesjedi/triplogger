@@ -229,6 +229,7 @@ fun HomeScreen(
     val startedAtMs by DrivingStatus.startedAtMs.collectAsState()
     val obdLink by DrivingStatus.obdLink.collectAsState()
     val obdValues by DrivingStatus.obdValues.collectAsState()
+    val distanceM by DrivingStatus.distanceM.collectAsState()
 
     // Use LaunchedEffect to start the service based on the initial appSettings state
     LaunchedEffect(key1 = appSettings.serviceEnabled, key2 = permissionsGranted, key3 = appSettings.tempLocationUri) {
@@ -362,6 +363,15 @@ fun HomeScreen(
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                val distance = distanceM
+                if (isLogging && distance != null && distance > 0) {
+                    val (value, unit) = UnitFormat.convert("km", distance / 1000.0, appSettings.usUnits)
+                    Text(
+                        text = stringResource(R.string.home_distance_covered, "%.1f".format(value), unit),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
 

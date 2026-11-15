@@ -60,6 +60,60 @@ class TripFinalizerTest {
     }
 
     @Test
+    fun persistsMultiSourceDistances() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val journal = store.createTrip("20260119_121000", day1Noon + 600_000, listOf("0D"))
+        repeat(10) { i ->
+            journal.append(GpsRow(day1Noon + 600_000 + i * 1000, day1Noon + 600_000 + i * 1000, 37.39 + i * 0.001, -122.08, 40.0, 12.5f, 180f, 5f))
+        }
+        repeat(10) { i ->
+            journal.append(ObdRow(day1Noon + 600_000 + i * 1000, null, null, null, null, mapOf("0D" to 45.0)))
+        }
+        journal.appendOdometer(day1Noon + 600_000, 57215.8)
+        journal.appendOdometer(day1Noon + 615_000, 57215.9) // 100 m, in line with the ~112 m integrals
+        journal.close()
+
+        val trip = store.orphanOf(journal)
+        val result = TripFinalizer.finalize(trip, FinalizeSettings(listOf("0D"), false, false), null, null, FakePlotRenderer)
+        assertTrue(result is FinalizeResult.Completed)
+
+        val props = trip.readProps()
+        assertEquals("1", props["distance_algo"])
+        assertNotNull(props["distance_track_m"])
+        assertNotNull(props["distance_gps_speed_m"])
+        assertNotNull(props["distance_obd_m"])
+        assertEquals("100.0", props["distance_odo_m"])
+        assertEquals(DistanceEstimators.SOURCE_ODO, props["distance_src"])
+        assertEquals("57215.8", props["odo_start_km"])
+        assertEquals("57215.9", props["odo_end_km"])
+
+        // The Trips row model exposes best + all sources from props alone.
+        assertEquals(4, trip.distanceEstimates().size)
+        assertEquals(DistanceEstimators.SOURCE_ODO, trip.distanceSrc())
+        assertEquals(100.0, trip.distanceEstimates()[DistanceEstimators.SOURCE_ODO]!!, 0.05)
+    }
+
+    @Test
+    fun implausibleOdometerIsRejectedAndNoted() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val journal = store.createTrip("20260119_122000", day1Noon + 1_200_000, listOf("0D"))
+        repeat(10) { i ->
+            journal.append(GpsRow(day1Noon + 1_200_000 + i * 1000, day1Noon + 1_200_000 + i * 1000, 37.39 + i * 0.001, -122.08, 40.0, 12.5f, 180f, 5f))
+        }
+        journal.appendOdometer(day1Noon + 1_200_000, 100.0)
+        journal.appendOdometer(day1Noon + 1_815_000, 120.0) // 20 km over a ~1 km trip
+        journal.close()
+
+        val trip = store.orphanOf(journal)
+        TripFinalizer.finalize(trip, FinalizeSettings(listOf("0D"), false, false), null, null, FakePlotRenderer)
+
+        val props = trip.readProps()
+        org.junit.Assert.assertNull(props["distance_odo_m"])
+        assertTrue(props["distance_odo_note"]!!.contains("jumped"))
+        org.junit.Assert.assertNotEquals(DistanceEstimators.SOURCE_ODO, props["distance_src"])
+    }
+
+    @Test
     fun emptyTripIsSkipped() {
         val store = FileJournalStore(tmp.newFolder("journal"))
         val empty = store.createTrip("20260119_120000", day1Noon, listOf("0C"))

@@ -1,10 +1,5 @@
 package com.mallner.triplogger
 
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
-
 /**
  * Converts a recorded trip into final artifacts:
  *  - the daily Google Earth KMZ (merged into the existing file for that day)
@@ -70,7 +65,9 @@ object TripFinalizer {
             // Trip stats persisted into the journal metadata for the Trips tab.
             val endMs = (gpsRows.maxOfOrNull { it.ts } ?: 0L)
                 .coerceAtLeast(obdRows.maxOfOrNull { it.ts } ?: 0L)
-            val distanceM = tripDistanceMeters(gpsRows)
+            val odoReadings = trip.readOdoReadings()
+            val estimates = DistanceEstimators.estimates(gpsRows, obdRows, odoReadings)
+            val distanceM = estimates.trackM ?: Double.NaN
             val maxSpeedMps = gpsRows.maxOfOrNull { it.speedMps }?.takeIf { !it.isNaN() && it > 0 } ?: Float.NaN
             val entries = maxOf(gpsRows.size, obdRows.size)
 
@@ -111,6 +108,18 @@ object TripFinalizer {
                         "end_ms" to endMs.toString(),
                         "entries" to entries.toString(),
                         "distance_m" to if (distanceM.isNaN()) null else "%.1f".format(distanceM),
+                        // Multi-source mileage (algo 1): every method that had
+                        // data, the chosen best, and the odometer window.
+                        // Legacy distance_m stays as the track value.
+                        "distance_algo" to "1",
+                        "distance_track_m" to estimates.trackM?.let { "%.1f".format(it) },
+                        "distance_gps_speed_m" to estimates.gpsSpeedM?.let { "%.1f".format(it) },
+                        "distance_obd_m" to estimates.obdSpeedM?.let { "%.1f".format(it) },
+                        "distance_odo_m" to estimates.odoM?.let { "%.1f".format(it) },
+                        "odo_start_km" to odoReadings.firstOrNull()?.second?.let { "%.1f".format(it) },
+                        "odo_end_km" to if (odoReadings.size >= 2) "%.1f".format(odoReadings.last().second) else null,
+                        "distance_src" to estimates.bestSource(),
+                        "distance_odo_note" to if (estimates.odoM == null && estimates.odoRejectReason != null) estimates.odoRejectReason else null,
                         "max_speed_mps" to if (maxSpeedMps.isNaN()) null else "%.2f".format(maxSpeedMps),
                         "segments" to trip.listFileNames()
                             .count { it.startsWith("gps-") || it == "gps.csv" }.toString(),
@@ -132,26 +141,8 @@ object TripFinalizer {
      * fewer than two fixes exist. Fixed-position jitter below 10 m is
      * ignored so a parked trip does not accumulate kilometers.
      */
-    internal fun tripDistanceMeters(gpsRows: List<GpsRow>): Double {
-        val points = gpsRows.sortedBy { it.gpsTime }.filter { !it.latitude.isNaN() && !it.longitude.isNaN() }
-        if (points.size < 2) return Double.NaN
-        var total = 0.0
-        for (i in 1 until points.size) {
-            val d = haversineMeters(points[i - 1], points[i])
-            if (d > 10.0) total += d
-        }
-        return total
-    }
-
-    private fun haversineMeters(a: GpsRow, b: GpsRow): Double {
-        val r = 6_371_000.0
-        val dLat = Math.toRadians(b.latitude - a.latitude)
-        val dLon = Math.toRadians(b.longitude - a.longitude)
-        val lat1 = Math.toRadians(a.latitude)
-        val lat2 = Math.toRadians(b.latitude)
-        val h = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2)
-        return 2 * r * atan2(sqrt(h), sqrt(1 - h))
-    }
+    internal fun tripDistanceMeters(gpsRows: List<GpsRow>): Double =
+        DistanceEstimators.trackMeters(gpsRows) ?: Double.NaN
 
     /** Spreadsheet times carry the offset each row was recorded with (DST-safe). */
     private fun buildOds(obdRows: List<ObdRow>, pids: List<String>, us: Boolean, startTz: Int?): ByteArray {

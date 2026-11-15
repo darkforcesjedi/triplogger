@@ -35,6 +35,10 @@ data class TripEntry(
     val endMs: Long,
     val entries: Int,
     val distanceM: Double,
+    /** Best source label (odo|obd|gps_speed|track) for multi-source trips, null for legacy. */
+    val distanceSrc: String?,
+    /** All persisted distance estimates (source -> meters), empty for legacy trips. */
+    val distanceSources: Map<String, Double> = emptyMap(),
     val maxSpeedMps: Float,
     val segments: Int,
     val title: String?,
@@ -49,6 +53,15 @@ data class TripEntry(
     val statusReason: String?,
     val appVersionName: String?
 ) {
+    /** Distance to present: best multi-source estimate, else the legacy value. */
+    val bestDistanceM: Double?
+        get() = distanceSrc?.let { distanceSources[it] }
+            ?: distanceSources[DistanceEstimators.SOURCE_ODO]
+            ?: distanceSources[DistanceEstimators.SOURCE_OBD]
+            ?: distanceSources[DistanceEstimators.SOURCE_GPS_SPEED]
+            ?: distanceSources[DistanceEstimators.SOURCE_TRACK]
+            ?: distanceM.takeIf { !it.isNaN() }
+
     val durationMs: Long get() = if (endMs > startMs) endMs - startMs else 0L
     val displayTitle: String
         get() = title?.takeIf { it.isNotBlank() }
@@ -112,6 +125,8 @@ class TripsRepository(private val context: Context) {
             endMs = trip.endMs(),
             entries = props["entries"]?.toIntOrNull() ?: 0,
             distanceM = trip.distanceM(),
+            distanceSrc = trip.distanceSrc(),
+            distanceSources = trip.distanceEstimates(),
             maxSpeedMps = trip.maxSpeedMps(),
             segments = trip.segmentsCount(),
             title = trip.title(),

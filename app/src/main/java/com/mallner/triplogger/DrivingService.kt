@@ -42,6 +42,9 @@ class DrivingService : Service() {
         const val ACTION_STOP_SERVICE = "STOP_SERVICE"
         const val ACTION_NEW_TRIP = "NEW_TRIP"
         const val ACTION_REBUILD_LOGS = "REBUILD_LOGS"
+
+        /** How often the dashboard odometer (Mode 01 A6) is read while OBD is connected. */
+        const val ODO_POLL_INTERVAL_MS = 15_000L
         const val ACTION_LOOKUP_PLACES = "LOOKUP_PLACES"
         const val EXTRA_LOOKUPS_UNTAGGED_ONLY = "untagged_only"
     }
@@ -186,6 +189,10 @@ class DrivingService : Service() {
                     val settings = appSettingsRepository.appSettingsFlow.first()
                     finalizeCurrentJournal()
                     createJournal(settings, DrivingStatus.triggeredBy.value ?: "manual")
+                    liveDistance.reset()
+                    odoProbeFailedTrip = false
+                    odoSupported = false
+                    odoLastPollMs = 0L
                 }
             }
             return START_STICKY
@@ -345,9 +352,25 @@ class DrivingService : Service() {
 
         startObdPolling(settings)
         startNotificationTicker()
+        liveDistance.reset()
+        odoProbeFailedTrip = false
+        odoSupported = false
+        odoLastPollMs = 0L
     }
 
     @Volatile private var fixSinceLogging = false
+
+    /** Live mileage accumulators for the Home screen (best available source). */
+    private val liveDistance = LiveDistance()
+
+    /**
+     * Odometer (Mode 01 A6) probe state. A6 never enters the live PID list;
+     * when probed it rides the poll loop on its own 15 s cadence. A car that
+     * does not answer A6 is not asked again for the rest of the trip.
+     */
+    @Volatile private var odoProbeFailedTrip = false
+    @Volatile private var odoSupported = false
+    @Volatile private var odoLastPollMs = 0L
 
     // Guards against a cancelled ticker's last tick overwriting the idle
     // notification posted by stopLogging().
@@ -399,6 +422,8 @@ class DrivingService : Service() {
         DrivingStatus.isObdConnected.value = false
         DrivingStatus.obdValues.value = emptyMap()
         lastObdValues = emptyMap()
+        liveDistance.reset()
+        DrivingStatus.distanceM.value = null
         DrivingStatus.obdLink.value =
             if (lastSettings?.obdEnabled == true) ObdLinkState.WAITING_FOR_DEVICE else ObdLinkState.IDLE
 
@@ -498,6 +523,8 @@ class DrivingService : Service() {
                     )
                 )
                 fixSinceLogging = true
+                liveDistance.onGps(location.time, location.latitude, location.longitude, location.speed)
+                DrivingStatus.distanceM.value = liveDistance.bestMeters()
             } catch (e: Exception) {
                 Log.e("DrivingService", "Error writing to log journal", e)
             }
@@ -614,6 +641,9 @@ class DrivingService : Service() {
 
             lastObdValues = values
             DrivingStatus.obdValues.value = values
+            liveDistance.onObdSpeed(cycleStart, values["0D"]?.let { it / 3.6 })
+            maybePollOdometer(client, cycleStart)
+            DrivingStatus.distanceM.value = liveDistance.bestMeters()
 
             val location = DrivingStatus.lastLocation.value
             synchronized(journalLock) {
@@ -636,6 +666,41 @@ class DrivingService : Service() {
             val interval = settings.obdPollIntervalMs.coerceAtLeast(250).toLong()
             val elapsed = System.currentTimeMillis() - cycleStart
             delay((interval - elapsed).coerceAtLeast(50L))
+        }
+    }
+
+    /**
+     * Silent odometer probe (Mode 01 A6) riding the poll loop: probed once per
+     * connection and, when answered, re-read every ~15 s. Cars that reject or
+     * ignore A6 are never asked again for the rest of the trip (some cars
+     * choke on unsupported PIDs), and a failed probe never fails the
+     * connection. Accepted readings are journaled as they arrive so the
+     * odometer delta survives ignition-off and crashes; the finalizer turns
+     * them into the best distance estimate.
+     */
+    private fun maybePollOdometer(client: Elm327Client, nowMs: Long) {
+        if (odoProbeFailedTrip) return
+        if (odoSupported && odoLastPollMs > 0 && nowMs - odoLastPollMs < ODO_POLL_INTERVAL_MS) return
+        val response = runCatching { client.queryPid("A6") }.getOrNull()
+        val pid = ObdPids.byHex("A6") ?: return
+        when (response) {
+            is ObdResponse.Ok -> {
+                val km = ObdPids.parseValue(pid, response.dataHex)
+                if (km != null && liveDistance.acceptOdometer(km, nowMs)) {
+                    odoSupported = true
+                    odoLastPollMs = nowMs
+                    synchronized(journalLock) { currentJournal?.appendOdometer(nowMs, km) }
+                }
+            }
+            else -> {
+                // NoData / Error / BusStopped / Timeout: treat as "no odometer on
+                // this car" for this trip (an odometer that answers once but
+                // stops is caught by the finalizer's validation instead).
+                if (!odoSupported) {
+                    odoProbeFailedTrip = true
+                    ActivityLog.log("obd_odo_unsupported")
+                }
+            }
         }
     }
 
@@ -860,5 +925,105 @@ class DrivingService : Service() {
                 notificationManager.cancelProgress()
             }
         }
+    }
+}
+
+/**
+ * Live per-trip distance accumulators for the Home screen, one per source
+ * that has data; reset with each new journal. Mirrors the finalizer's math
+ * incrementally: odometer delta wins over the OBD wheel-speed integral,
+ * which wins over the ZUPT-gated GPS speed integral, which wins over the
+ * jitter-gated haversine track.
+ */
+internal class LiveDistance {
+    private var trackM = 0.0
+    private var gpsSpeedM = 0.0
+    private var obdM = 0.0
+    private var odoFirstKm: Double? = null
+    private var odoLastKm: Double? = null
+
+    @Volatile private var lastFixTimeMs = 0L
+    @Volatile private var lastLat = Double.NaN
+    @Volatile private var lastLon = Double.NaN
+    @Volatile private var lastSpeedMps = Float.NaN
+    @Volatile private var lastObdTimeMs = 0L
+    @Volatile private var lastObdMps: Double? = null
+    @Volatile private var odoLastTimeMs = 0L
+
+    @Synchronized
+    fun reset() {
+        trackM = 0.0; gpsSpeedM = 0.0; obdM = 0.0
+        odoFirstKm = null; odoLastKm = null
+        lastFixTimeMs = 0L; lastLat = Double.NaN; lastLon = Double.NaN; lastSpeedMps = Float.NaN
+        lastObdTimeMs = 0L; lastObdMps = null; odoLastTimeMs = 0L
+    }
+
+    @Synchronized
+    fun onGps(timeMs: Long, lat: Double, lon: Double, speedMps: Float) {
+        if (lat.isNaN() || lon.isNaN()) return
+        val prevTime = lastFixTimeMs
+        lastFixTimeMs = timeMs
+        if (prevTime > 0L && !lastLat.isNaN()) {
+            val dt = (timeMs - prevTime) / 1000.0
+            val d = haversineBetween(lastLat, lastLon, lat, lon)
+            if (d > DistanceEstimators.JITTER_FLOOR_M) trackM += d
+            if (dt > 0.0 && dt <= DistanceEstimators.MAX_STEP_S) {
+                val va = lastSpeedMps
+                if (!va.isNaN() && va >= 0f && !speedMps.isNaN() && speedMps >= 0f) {
+                    if (va >= DistanceEstimators.ZUPT_SPEED_MPS || speedMps >= DistanceEstimators.ZUPT_SPEED_MPS) {
+                        gpsSpeedM += (va + speedMps) / 2.0 * dt
+                    }
+                } else if (d > DistanceEstimators.JITTER_FLOOR_M) {
+                    gpsSpeedM += d
+                }
+            }
+        }
+        lastLat = lat; lastLon = lon; lastSpeedMps = speedMps
+    }
+
+    @Synchronized
+    fun onObdSpeed(timeMs: Long, mps: Double?) {
+        if (mps == null || mps.isNaN()) return
+        val prev = lastObdMps
+        val prevTime = lastObdTimeMs
+        lastObdTimeMs = timeMs
+        lastObdMps = mps
+        if (prev != null && prevTime > 0L) {
+            val dt = (timeMs - prevTime) / 1000.0
+            if (dt > 0.0 && dt <= DistanceEstimators.MAX_STEP_S) obdM += (prev + mps) / 2.0 * dt
+        }
+    }
+
+    /**
+     * Feed one A6 reading. Accepted only when it plausibly moved (monotonic,
+     * within 160 km/h plus jitter allowance between polls); returns whether it
+     * was taken, and the caller journals accepted values.
+     */
+    @Synchronized
+    fun acceptOdometer(km: Double, timeMs: Long): Boolean {
+        val dtHours = if (odoLastTimeMs > 0L) (timeMs - odoLastTimeMs) / 3_600_000.0 else 0.0
+        val maxStepKm = (160.0 * dtHours).coerceAtLeast(0.5)
+        if (!DistanceEstimators.liveOdoAccepts(odoLastKm, km, maxStepKm)) return false
+        if (odoFirstKm == null) odoFirstKm = km
+        odoLastKm = km
+        odoLastTimeMs = timeMs
+        return true
+    }
+
+    @Synchronized
+    fun bestMeters(): Double? {
+        val first = odoFirstKm
+        val last = odoLastKm
+        if (first != null && last != null && last > first) return (last - first) * 1000.0
+        if (obdM > 0.0) return obdM
+        if (gpsSpeedM > 0.0) return gpsSpeedM
+        if (trackM > 0.0) return trackM
+        return null
+    }
+
+    private fun haversineBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val fakeA = GpsRow(0, 0, lat1, lon1, 0.0, 0f, 0f, 0f)
+        val fakeB = GpsRow(0, 0, lat2, lon2, 0.0, 0f, 0f, 0f)
+        return DistanceEstimators.haversineMeters(fakeA, fakeB)
     }
 }

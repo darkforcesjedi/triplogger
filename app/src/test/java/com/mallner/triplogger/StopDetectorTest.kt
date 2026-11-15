@@ -66,7 +66,7 @@ class StopDetectorTest {
         assertEquals(listOf("confirmed"), sink.events) // nothing before resume
         val resume = stopStart + 70_000
         wheel(d, resume, 10, 40.0)
-        assertEquals("held back for potential merge", 0, sink.closed.size)
+        assertEquals("recorded the moment motion resumes", 1, sink.closed.size)
         d.finishTrip()
         assertEquals(1, sink.closed.size)
         val e = sink.closed[0]
@@ -284,22 +284,45 @@ class StopDetectorTest {
     }
 
     @Test
-    fun noiseBlipMidDwellMergesIntoOneStop() {
+    fun gpsBlipEndDoesNotRecordASecondStopAtTheSamePlace() {
+        val sink = Sink()
+        val d = detector(sink)
+        gps(d, base, 60, 13.9)
+        val stopStart = base + 60_000
+        gps(d, stopStart, 140, 0.0)
+        // Three fixed-position speed blips "end" the stop...
+        var t = stopStart + 140_000
+        var lat = lat0
+        repeat(3) { d.onGpsSample(t, lat, lon0, 13.9); t += 5_000 }
+        assertEquals(1, sink.closed.size) // ...recorded immediately, no hold-back
+        // ...the car never moves, the dwell re-confirms: NO second record.
+        repeat(40) { d.onGpsSample(t, lat, lon0, 0.0); t += 5_000 }
+        assertEquals(1, sink.closed.size)
+        // A real drive-away exits the recorded stop's radius...
+        repeat(12) {
+            d.onGpsSample(t, lat, lon0, 13.9); lat += 13.9 * 5 / 111_319.5; t += 5_000
+        }
+        // ...so the next genuine stop at the new place counts.
+        var lat2 = lat
+        repeat(40) { d.onGpsSample(t, lat2, lon0, 0.0); t += 5_000 }
+        repeat(3) {
+            d.onGpsSample(t, lat2, lon0, 13.9); lat2 += 13.9 * 5 / 111_319.5; t += 5_000
+        }
+        assertEquals(2, sink.closed.size)
+    }
+
+    @Test
+    fun wheelResumesAreTrustedMovement() {
+        // 0D rotation IS movement: after one wheel stop ends and the car
+        // rolls again, the next dwell is a new stop, no radius needed.
         val sink = Sink()
         val d = detector(sink)
         wheel(d, base, 30, 40.0)
-        val stopStart = base + 30_000
-        wheel(d, stopStart, 70, 0.0)
-        val blip = stopStart + 70_000
-        wheel(d, blip, 3, 3.0) // sensor burst: technically ends stop #1
-        val stop2 = blip + 3_000
-        wheel(d, stop2, 70, 0.0) // re-confirm at the same place
-        wheel(d, stop2 + 70_000, 5, 40.0)
-        d.finishTrip()
-        assertEquals("one physical stop, one record", 1, sink.closed.size)
-        val e = sink.closed[0]
-        assertEquals(stopStart, e.startMs)
-        assertEquals(stop2 + 70_000, e.endMs) // the true resume
+        wheel(d, base + 30_000, 70, 0.0)
+        wheel(d, base + 100_000, 5, 40.0)
+        wheel(d, base + 105_000, 120, 0.0)
+        wheel(d, base + 225_000, 5, 40.0)
+        assertEquals(2, sink.closed.size)
     }
 
     @Test

@@ -63,13 +63,14 @@ data class StopEvent(
  *   consecutive wheel scans > 0, or 3 GPS fixes above 1 m/s). Lingering
  *   in the driveway before the trip's first movement is the trip's
  *   beginning, not a stop, and must not split-trip a fresh journal.
- * - Merging: a noise burst or sensor blip mid-dwell closes one stop and
- *   re-detection opens another at the same place; a stop closing within
- *   [mergeGapMs] of the previous one at (nearly) the same coordinates is
- *   merged into it, so one physical stop yields ONE record. Merging
- *   defers each stop's [onClosed] until the next stop closes or the
- *   session's [finishTrip] flushes it (annotate mode drains at finalize,
- *   which runs after finishTrip, so nothing is lost).
+ * - No ghost re-stops: a stop is recorded the moment it resumes (never
+ *   held back), and a NEW stop must prove the car actually moved
+ *   meanwhile: after a stop is recorded, the next one is only declared
+ *   once the car left that stop's radius (a fix beyond [radiusM] of its
+ *   centroid) - a GPS blip that "ended" a stop, followed by re-detection
+ *   at the same spot, yields NO second record (the first one just ends
+ *   early by the blip's few seconds). Wheel closes are trusted movement:
+ *   0D reports rotation, so a wheel resume itself counts as having left.
  *
  * [onConfirmed] fires when a stop is confirmed but not yet ended (split-trip
  * mode closes the journal there), [onResumed] when a confirmed stop ends
@@ -88,7 +89,6 @@ class StopDetector(
     private val endMps: Double = 1.5,
     private val radiusM: Double = 25.0,
     private val radiusFraction: Double = 0.9,
-    private val mergeGapMs: Long = 60_000,
     private val onConfirmed: (() -> Unit)? = null,
     private val onResumed: (() -> Unit)? = null,
     private val onClosed: ((StopEvent) -> Unit)? = null
@@ -141,9 +141,11 @@ class StopDetector(
     private var wheelArmRun = 0
     private var gpsArmRun = 0
 
-    // Last closed stop, held back so a noise-split continuation can merge
-    // into it instead of recording the same physical stop twice.
-    private var pendingClosed: StopEvent? = null
+    // Center of the last RECORDED stop and whether the car has since left
+    // its radius: a re-detection with no exit in between is a GPS blip
+    // ending one physical stop, not a second stop (see class docs).
+    private var lastStopCenter: Pair<Double, Double>? = null
+    private var lastStopExited = true
 
     @Synchronized
     fun onWheelSample(tsMs: Long, speedKmh: Double) {
@@ -181,7 +183,7 @@ class StopDetector(
                 speedKmh > 0.0 -> {
                     wheelRun++
                     if (wheelRun == 1) wheelRunFirstMs = tsMs
-                    if (wheelRun >= ABORT_SCANS) closed(wheelRunFirstMs)
+                    if (wheelRun >= ABORT_SCANS) closed(wheelRunFirstMs, byWheel = true)
                 }
 
                 else -> wheelRun = 0
@@ -198,6 +200,12 @@ class StopDetector(
                 if (++gpsArmRun >= ABORT_SCANS) armed = true
             } else {
                 gpsArmRun = 0
+            }
+        }
+        if (!lastStopExited) {
+            val prev = lastStopCenter
+            if (prev != null && groundMeters(prev.first, prev.second, latitude, longitude) > radiusM) {
+                lastStopExited = true
             }
         }
         // Fresh wheel data decides; GPS only guards no-OBD / OBD-off gaps.
@@ -236,7 +244,7 @@ class StopDetector(
             State.STOPPED -> if (v > endMps) {
                 gpsRun++
                 if (gpsRun == 1) gpsRunFirstMs = tsMs
-                if (gpsRun >= ABORT_SCANS) closed(gpsRunFirstMs)
+                if (gpsRun >= ABORT_SCANS) closed(gpsRunFirstMs, byWheel = false)
             } else {
                 gpsRun = 0
             }
@@ -245,18 +253,17 @@ class StopDetector(
 
     /**
      * Trip/session boundary: a dwell that never saw motion resume is dropped
-     * (the end of a trip is not a stop), the held-back last stop is flushed,
-     * and everything - including the movement arming - resets.
+     * (the end of a trip is not a stop), and everything - including the
+     * movement arming and the ghost-stop radius bookkeeping - resets.
      */
     @Synchronized
     fun finishTrip() {
-        val pending = pendingClosed
-        pendingClosed = null
         resetAll()
         armed = false
         wheelArmRun = 0
         gpsArmRun = 0
-        if (pending != null) onClosed?.invoke(pending)
+        lastStopCenter = null
+        lastStopExited = true
     }
 
     private fun confirm(tsMs: Long, source: String) {
@@ -271,43 +278,46 @@ class StopDetector(
         gpsRun = 0
         gpsWindow = mutableListOf()
         filteredMps = null
-        if (openStartMs == null) {
+        // One physical stop is never recorded twice: after a recorded stop
+        // the car must have left its radius (a fix beyond radiusM, or wheel
+        // rotation) before a new detection counts. Until then the dwell
+        // simply remains the stopped state it never really left.
+        val ghost = lastStopCenter != null && !lastStopExited
+        if (openStartMs == null && !ghost) {
             openStartMs = start
             openSource = source
             onConfirmed?.invoke()
         }
     }
 
-    private fun closed(endMs: Long) {
+    /**
+     * Motion resumed. Emits the stop immediately (no hold-back) unless no
+     * stop was open - the case after a suppressed ghost re-detection, where
+     * the physical stop already ended with the blip. A wheel resume counts
+     * as evidence that the car left: 0D reports rotation, and only noise-
+     * free movement can end a wheel-detected stop.
+     */
+    private fun closed(endMs: Long, byWheel: Boolean) {
         val start = openStartMs
         val source = openSource
         val centroid = if (start != null) centroidOf(start, endMs) else null
         resetAll()
         if (start != null) {
-            val event = StopEvent(
-                startMs = start,
-                endMs = endMs,
-                latitude = centroid?.first,
-                longitude = centroid?.second,
-                source = source ?: "gps"
+            onClosed?.invoke(
+                StopEvent(
+                    startMs = start,
+                    endMs = endMs,
+                    latitude = centroid?.first,
+                    longitude = centroid?.second,
+                    source = source ?: "gps"
+                )
             )
-            val prev = pendingClosed
-            if (prev != null && event.startMs - prev.endMs <= mergeGapMs && samePlace(prev, event)) {
-                // A blip split ONE physical stop in two: extend the record.
-                pendingClosed = prev.copy(endMs = event.endMs)
-            } else {
-                if (prev != null) onClosed?.invoke(prev)
-                pendingClosed = event
-            }
+            lastStopCenter = centroid
+            lastStopExited = byWheel || centroid == null
+        } else if (byWheel) {
+            lastStopExited = true
         }
         onResumed?.invoke()
-    }
-
-    /** Missing coordinates (wheel-only stops) never block a time-based merge. */
-    private fun samePlace(a: StopEvent, b: StopEvent): Boolean {
-        val la = a.latitude ?: return true
-        val lb = b.latitude ?: return true
-        return groundMeters(la, a.longitude!!, lb, b.longitude!!) <= radiusM
     }
 
     /** Spatial confirmation: >= radiusFraction of window fixes near centroid. */

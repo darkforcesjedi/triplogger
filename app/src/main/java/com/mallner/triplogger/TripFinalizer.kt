@@ -16,8 +16,42 @@ data class FinalizeSettings(
     val saveOds: Boolean,
     /** Convert speed/temperature/pressure/distance outputs to US customary. */
     val usUnits: Boolean = true,
-    /** Written into trip.properties at conversion: user-facing app version. */
+    /** Recorded with the converted trip: user-facing app version. */
     val appVersionName: String = ""
+)
+
+/**
+ * Where conversion records its derived metadata. Implemented by
+ * [TripMetadataStore] in production and by fakes in JVM tests; null keeps
+ * the pre-database behavior of merging trip.properties in place.
+ */
+interface TripMetadataWriter {
+    fun recordConversion(
+        tripId: String,
+        endMs: Long,
+        entries: Int,
+        segments: Int,
+        distanceSource: String?,
+        convertedAt: Long,
+        appVersion: String?,
+        rawBytes: Long?,
+        rawFileCount: Int?
+    )
+
+    fun putMetric(tripId: String, kind: String, source: String, value: Double, note: String?)
+    fun setExt(tripId: String, key: String, value: String?)
+    fun rememberOutput(tripId: String, kind: String, name: String, bytes: Long?)
+    fun replaceOdoReadings(tripId: String, readings: List<Pair<Long, Double>>)
+}
+
+/** The trips row being finalized (the DB replaced trip.properties as truth). */
+data class FinalizeTarget(
+    val tripId: String,
+    /** Row start time (journal creation); finalizer prefers first sample. */
+    val startMs: Long,
+    val title: String?,
+    val pids: List<String>,
+    val tzOffsetMin: Int?
 )
 
 sealed class FinalizeResult {
@@ -33,26 +67,29 @@ object TripFinalizer {
         settings: FinalizeSettings,
         kmzStorage: TripStorage?,
         odsStorage: TripStorage?,
-        renderer: PlotRenderer
+        renderer: PlotRenderer,
+        meta: TripMetadataWriter? = null,
+        target: FinalizeTarget? = null
     ): FinalizeResult {
         return try {
             // The OBD CSV columns are positional and were written with the PID list the
             // trip recorded, so parse with that list - the current settings selection
             // can differ (changed sensors, rebuilt archive) and would misalign columns.
-            val pids = trip.pids().ifEmpty { settings.pidHexes }
+            val pids = (target?.pids ?: trip.pids()).ifEmpty { settings.pidHexes }
             val gpsRows = trip.readGpsRows()
             val obdRows = trip.readObdRows(pids)
-            val startMs = (gpsRows.minOfOrNull { it.ts } ?: 0L).takeIf { it > 0 } ?: trip.startMs()
+            val startMs = (gpsRows.minOfOrNull { it.ts } ?: 0L).takeIf { it > 0 }
+                ?: (target?.startMs ?: trip.startMs())
 
             if (startMs <= 0L || (gpsRows.isEmpty() && obdRows.isEmpty())) {
                 return FinalizeResult.Skipped("empty journal")
             }
 
             // The zone the trip started in, from the recorded samples (fallback:
-            // trip.properties, then device). Never the device zone at export time.
+            // trip row/properties, then device). Never the device zone at export time.
             val startTz = gpsRows.firstNotNullOfOrNull { it.tzOffsetMin }
                 ?: obdRows.firstNotNullOfOrNull { it.tzOffsetMin }
-                ?: trip.tzOffsetMin()
+                ?: target?.tzOffsetMin ?: trip.tzOffsetMin()
 
             val dayLabel = TripFormats.dayLabel(startMs, startTz)
             val label = TripFormats.tripLabel(startMs, startTz)
@@ -60,7 +97,7 @@ object TripFinalizer {
             // collide across DST fall-back - the legacy id stays replaceable.
             val trackId = "t$startMs"
             val legacyTrackId = label.replace('.', ':')
-            val title = trip.title()
+            val title = target?.title ?: trip.title()
 
             // Trip stats persisted into the journal metadata for the Trips tab.
             val endMs = (gpsRows.maxOfOrNull { it.ts } ?: 0L)
@@ -99,41 +136,103 @@ object TripFinalizer {
 
             // Persist derived metadata so the Trips tab shows rows without ever
             // reading CSVs (and renames/clears clear the failure marker).
-            runCatching {
-                trip.mergeProps(
-                    mapOf(
-                        "converted" to "1",
-                        "converted_at" to System.currentTimeMillis().toString(),
-                        "app_version" to settings.appVersionName,
-                        "end_ms" to endMs.toString(),
-                        "entries" to entries.toString(),
-                        "distance_m" to if (distanceM.isNaN()) null else "%.1f".format(distanceM),
-                        // Multi-source mileage (algo 1): every method that had
-                        // data, the chosen best, and the odometer window.
-                        // Legacy distance_m stays as the track value.
-                        "distance_algo" to "1",
-                        "distance_track_m" to estimates.trackM?.let { "%.1f".format(it) },
-                        "distance_gps_speed_m" to estimates.gpsSpeedM?.let { "%.1f".format(it) },
-                        "distance_obd_m" to estimates.obdSpeedM?.let { "%.1f".format(it) },
-                        "distance_odo_m" to estimates.odoM?.let { "%.1f".format(it) },
-                        "odo_start_km" to odoReadings.firstOrNull()?.second?.let { "%.1f".format(it) },
-                        "odo_end_km" to if (odoReadings.size >= 2) "%.1f".format(odoReadings.last().second) else null,
-                        "distance_src" to estimates.bestSource(),
-                        "distance_odo_note" to if (estimates.odoM == null && estimates.odoRejectReason != null) estimates.odoRejectReason else null,
-                        "max_speed_mps" to if (maxSpeedMps.isNaN()) null else "%.2f".format(maxSpeedMps),
-                        "segments" to trip.listFileNames()
-                            .count { it.startsWith("gps-") || it == "gps.csv" }.toString(),
-                        "kmz_day" to kmzLabel,
-                        "ods_file" to odsFileName,
-                        "status_reason" to null
+            val journalFiles = trip.listFileNames()
+            val segments = journalFiles.count { it.startsWith("gps-") || it == "gps.csv" }
+            val odoNote =
+                if (estimates.odoM == null && estimates.odoRejectReason != null) estimates.odoRejectReason else null
+            if (meta != null) {
+                runCatching {
+                    recordInto(meta, target?.tripId ?: trackId, endMs, entries, segments,
+                        journalFiles.size, estimates, odoNote, maxSpeedMps, odoReadings, kmzLabel, odsFileName, settings)
+                    // The row is the record now; drop any leftover properties file.
+                    trip.deleteProps()
+                }.onFailure { android.util.Log.w("TripFinalizer", "metadata write failed", it) }
+            } else {
+                // Pre-database fallback (JVM tests and any store without a DB).
+                runCatching {
+                    trip.mergeProps(
+                        mapOf(
+                            "converted" to "1",
+                            "converted_at" to System.currentTimeMillis().toString(),
+                            "app_version" to settings.appVersionName,
+                            "end_ms" to endMs.toString(),
+                            "entries" to entries.toString(),
+                            "distance_m" to if (distanceM.isNaN()) null else "%.1f".format(distanceM),
+                            // Multi-source mileage (algo 1): every method that had
+                            // data, the chosen best, and the odometer window.
+                            // Legacy distance_m stays as the track value.
+                            "distance_algo" to "1",
+                            "distance_track_m" to estimates.trackM?.let { "%.1f".format(it) },
+                            "distance_gps_speed_m" to estimates.gpsSpeedM?.let { "%.1f".format(it) },
+                            "distance_obd_m" to estimates.obdSpeedM?.let { "%.1f".format(it) },
+                            "distance_odo_m" to estimates.odoM?.let { "%.1f".format(it) },
+                            "odo_start_km" to odoReadings.firstOrNull()?.second?.let { "%.1f".format(it) },
+                            "odo_end_km" to if (odoReadings.size >= 2) "%.1f".format(odoReadings.last().second) else null,
+                            "distance_src" to estimates.bestSource(),
+                            "distance_odo_note" to odoNote,
+                            "max_speed_mps" to if (maxSpeedMps.isNaN()) null else "%.2f".format(maxSpeedMps),
+                            "segments" to segments.toString(),
+                            "kmz_day" to kmzLabel,
+                            "ods_file" to odsFileName,
+                            "status_reason" to null
+                        )
                     )
-                )
+                }
             }
 
             FinalizeResult.Completed(label, wroteOds, kmzLabel)
         } catch (e: Exception) {
             FinalizeResult.Failed(e)
         }
+    }
+
+    /**
+     * Database path: derived summary row, every distance estimate, the
+     * odometer window, outputs and the odometer rejection note. Precision
+     * is kept as recorded (the UI formats), unlike the old %.1f props.
+     */
+    private fun recordInto(
+        meta: TripMetadataWriter,
+        tripId: String,
+        endMs: Long,
+        entries: Int,
+        segments: Int,
+        fileCount: Int,
+        estimates: DistanceEstimators.Estimates,
+        odoNote: String?,
+        maxSpeedMps: Float,
+        odoReadings: List<Pair<Long, Double>>,
+        kmzLabel: String?,
+        odsFileName: String?,
+        settings: FinalizeSettings
+    ) {
+        meta.recordConversion(
+            tripId = tripId,
+            endMs = endMs,
+            entries = entries,
+            segments = segments,
+            distanceSource = estimates.bestSource(),
+            convertedAt = System.currentTimeMillis(),
+            appVersion = settings.appVersionName,
+            rawBytes = null,
+            rawFileCount = fileCount
+        )
+        estimates.trackM?.let { meta.putMetric(tripId, "distance_m", DistanceEstimators.SOURCE_TRACK, it, null) }
+        estimates.gpsSpeedM?.let { meta.putMetric(tripId, "distance_m", DistanceEstimators.SOURCE_GPS_SPEED, it, null) }
+        estimates.obdSpeedM?.let { meta.putMetric(tripId, "distance_m", DistanceEstimators.SOURCE_OBD, it, null) }
+        estimates.odoM?.let { meta.putMetric(tripId, "distance_m", DistanceEstimators.SOURCE_ODO, it, odoNote) }
+        if (!maxSpeedMps.isNaN() && maxSpeedMps > 0) {
+            meta.putMetric(tripId, "max_speed_mps", "", maxSpeedMps.toDouble(), null)
+        }
+        odoReadings.firstOrNull()?.second?.let { meta.putMetric(tripId, "odo_km", "start", it, null) }
+        if (odoReadings.size >= 2) {
+            meta.putMetric(tripId, "odo_km", "end", odoReadings.last().second, null)
+        }
+        meta.setExt(tripId, "distance_odo_note", odoNote)
+        meta.setExt(tripId, "distance_algo", "1")
+        kmzLabel?.let { meta.rememberOutput(tripId, "kmz_day", "$it.kmz", null) }
+        odsFileName?.let { meta.rememberOutput(tripId, "ods", it, null) }
+        meta.replaceOdoReadings(tripId, odoReadings)
     }
 
     /**

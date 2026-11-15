@@ -328,6 +328,12 @@ class DrivingService : Service() {
             Log.w("DrivingService", "Not logging: temporary storage location is not set")
             return
         }
+        if (Storage.metadataStore(this, settings) == null) {
+            // Trips must be recorded in the metadata database; without it a
+            // journal folder would go unnoticed after conversion.
+            Log.w("DrivingService", "Not logging: trip metadata database unavailable")
+            return
+        }
         if (!settings.gpsEnabled && !settings.obdEnabled) {
             Log.w("DrivingService", "Not logging: neither GPS nor OBD is enabled")
             return
@@ -478,6 +484,19 @@ class DrivingService : Service() {
                 val store = journalStore() ?: return
                 val tripId = tripIdFor(System.currentTimeMillis())
                 val journal = store.createTrip(tripId, System.currentTimeMillis(), settings.obdSelectedPids, trigger ?: "")
+                // Pair the folder with its permanent record right away, so
+                // even a crash seconds later leaves a recoverable pending row.
+                runCatching {
+                    Storage.metadataStore(this, settings)?.insertLiveTrip(
+                        id = "t${journal.startMs}",
+                        folder = tripId,
+                        startMs = journal.startMs,
+                        pids = settings.obdSelectedPids.joinToString(",").ifEmpty { null },
+                        trigger = trigger?.takeIf { it.isNotEmpty() },
+                        tzId = TripFormats.deviceZoneId(),
+                        tzOffsetMin = TripFormats.deviceOffsetMin(journal.startMs)
+                    )
+                }.onFailure { Log.e("DrivingService", "Cannot insert trips row for $tripId", it) }
                 currentJournal = journal
                 DrivingStatus.startedAtMs.value = journal.startMs
             } catch (e: Exception) {
@@ -726,9 +745,13 @@ class DrivingService : Service() {
                 val trip = store.orphanOf(journal)
                 if (trip.isEmpty()) {
                     store.delete(trip)
+                    runCatching {
+                        Storage.metadataStore(this@DrivingService, settingsSnapshot())
+                            ?.deleteTrip("t${journal.startMs}")
+                    }
                     return@launch
                 }
-                finalizeTrip(store, trip)
+                finalizeTrip(store, trip, tripState = TripDatabase.STATE_PENDING)
             } catch (e: Exception) {
                 Log.e("DrivingService", "Trip ${journal.tripId} left for recovery", e)
             }
@@ -740,8 +763,17 @@ class DrivingService : Service() {
      * journal moves to archive/ or failed/; when false (rebuild from archive)
      * the outputs are overwritten but the archived journal is untouched.
      */
-    private fun finalizeTrip(store: JournalStore, trip: OrphanTrip, relocate: Boolean = true): FinalizeResult {
+    private fun finalizeTrip(
+        store: JournalStore,
+        trip: OrphanTrip,
+        relocate: Boolean = true,
+        tripState: String = TripDatabase.STATE_PENDING
+    ): FinalizeResult {
         val settings = settingsSnapshot()
+        val db = Storage.metadataStore(this, settings)
+        val row = runCatching { db?.let { JournalSync.ensureRow(it, trip, tripState) } }
+            .onFailure { Log.e("DrivingService", "No trips row for ${trip.name}", it) }
+            .getOrNull()
 
         // "Discard trips with fewer than N entries": journals below the
         // threshold skip post-processing and go to failed/ with a reason
@@ -753,9 +785,14 @@ class DrivingService : Service() {
             if (entries < settings.discardBelowEntries) {
                 Log.i("DrivingService", "Discarding trip ${trip.name}: $entries entries < ${settings.discardBelowEntries}")
                 if (relocate) {
-                    runCatching { trip.mergeProps(mapOf("status_reason" to "discarded: $entries entries below threshold")) }
+                    runCatching {
+                        row?.let {
+                            db?.setStatusReason(it.id, "discarded: $entries entries below threshold")
+                        }
+                    }
                     runCatching { store.relocate(trip, toArchive = false) }
                         .onFailure { Log.e("DrivingService", "Could not move discarded trip ${trip.name} to failed", it) }
+                    runCatching { row?.let { db?.relocate(it.id, null, TripDatabase.STATE_FAILED) } }
                     ActivityLog.log("trip_discarded", trip.name, "entries" to entries.toString(), "threshold" to settings.discardBelowEntries.toString())
                     toast(getString(R.string.toast_trip_discarded, entries, settings.discardBelowEntries))
                 }
@@ -782,7 +819,9 @@ class DrivingService : Service() {
             ),
             kmzStorage,
             odsStorage,
-            plotRenderer
+            plotRenderer,
+            meta = if (row != null) db else null,
+            target = row?.toTarget()
         )
         when (result) {
             is FinalizeResult.Completed -> {
@@ -791,6 +830,7 @@ class DrivingService : Service() {
                 if (relocate) {
                     runCatching { store.relocate(trip, toArchive = true) }
                         .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to archive", it) }
+                    row?.let { runCatching { db?.relocate(it.id, null, TripDatabase.STATE_ARCHIVE) } }
                     toast(getString(R.string.toast_trip_complete))
                     if (settings.placeNameLookups && settings.gpsEnabled) {
                         // Fire-and-forget Nominatim resolution (policy-compliant,
@@ -804,15 +844,19 @@ class DrivingService : Service() {
             }
             is FinalizeResult.Skipped -> {
                 Log.i("DrivingService", "Trip ${trip.name} skipped: ${result.reason}")
-                if (relocate) runCatching { store.delete(trip) }
+                if (relocate) {
+                    runCatching { store.delete(trip) }
+                    row?.let { runCatching { db?.deleteTrip(it.id) } }
+                }
             }
             is FinalizeResult.Failed -> {
                 Log.e("DrivingService", "Trip ${trip.name} conversion failed", result.error)
                 ActivityLog.log("trip_failed", trip.name, "error" to (result.error.message ?: "unknown"))
                 if (relocate) {
-                    runCatching { trip.mergeProps(mapOf("status_reason" to (result.error.message ?: "conversion failed"))) }
+                    runCatching { row?.let { db?.setStatusReason(it.id, result.error.message ?: "conversion failed") } }
                     runCatching { store.relocate(trip, toArchive = false) }
                         .onFailure { Log.e("DrivingService", "Could not relocate ${trip.name} to failed", it) }
+                    runCatching { row?.let { db?.relocate(it.id, null, TripDatabase.STATE_FAILED) } }
                 }
             }
         }
@@ -830,13 +874,29 @@ class DrivingService : Service() {
         if (!recovering.compareAndSet(false, true)) return // already running
         serviceScope.launch {
             try {
+                // Migration/reconciliation first: every folder needs its
+                // row before conversion (and strays get imported).
+                val settings = appSettingsRepository.appSettingsFlow.first()
+                if (JournalSync.ensureSynced(this@DrivingService, settings) == null) {
+                    Log.w("DrivingService", "Metadata database unavailable; recovery deferred")
+                    return@launch
+                }
                 val store = journalStore() ?: return@launch
-                for (trip in store.unfinishedTrips()) {
+                val db = Storage.metadataStore(this@DrivingService, settings)
+                val unfinished = store.pendingTrips().map { it to TripDatabase.STATE_PENDING } +
+                    store.failedTrips().map { it to TripDatabase.STATE_FAILED }
+                for ((trip, state) in unfinished) {
                     if (synchronized(journalLock) { currentJournal?.tripId } == trip.name) continue
+                    if (!trip.listFileNames().any { it.endsWith(".csv") }) {
+                        // Empty scratch folder (crash between create steps).
+                        runCatching { store.delete(trip) }
+                        runCatching { db?.tripByFolder(trip.name)?.let { db.deleteTrip(it.id) } }
+                        continue
+                    }
                     Log.i("DrivingService", "Recovering unfinished trip ${trip.name}")
                     ActivityLog.log("trip_recovered", trip.name)
                     try {
-                        finalizeTrip(store, trip)
+                        finalizeTrip(store, trip, tripState = state)
                     } catch (e: Exception) {
                         Log.e("DrivingService", "Recovery failed for ${trip.name}", e)
                     }
@@ -848,20 +908,37 @@ class DrivingService : Service() {
         }
     }
 
-    /** Applies the archive retention policy (age / minimum trip duration). */
+    /**
+     * Applies the archive retention policy (age / minimum trip duration):
+     * journal folder files first, then the row's raw_state flips to
+     * purged_retention, so a failed delete leaves the trip `present` and
+     * the next sweep retries. Metadata outlives its raw samples by design.
+     */
     private fun purgeArchive(store: JournalStore) {
         val settings = settingsSnapshot()
         val policy = ArchivePolicy(settings.archiveRetentionDays, settings.archiveMinTripSec)
         if (policy.retentionDays <= 0 && policy.minTripSec <= 0) return
+        val db = Storage.metadataStore(this, settings) ?: return
         val now = System.currentTimeMillis()
-        for (trip in store.archivedTrips()) {
+        val folders = store.archivedTrips().associateBy { it.name }
+        for (row in db.trips(TripDatabase.STATE_ARCHIVE)) {
+            if (row.rawState != TripDatabase.RAW_PRESENT) continue
             try {
-                if (policy.shouldDelete(trip.startMs(), trip.durationMs(), now)) {
-                    Log.i("DrivingService", "Purging archived trip ${trip.name} (retention policy)")
-                    store.delete(trip)
+                // Row times when converted; CSV span for legacy imports that
+                // never recorded an end time.
+                val duration = if (row.endMs != null && row.endMs > row.startMs) row.endMs - row.startMs
+                else folders[row.folder]?.durationMs() ?: 0L
+                if (policy.shouldDelete(row.startMs, duration, now)) {
+                    // A row whose folder is not in the listing is externally
+                    // deleted (reconciliation flags it missing), not purged.
+                    val orphan = folders[row.folder] ?: continue
+                    Log.i("DrivingService", "Purging archived trip ${row.folder} (retention policy)")
+                    runCatching { store.delete(orphan) }.onFailure { throw it }
+                    db.setRawState(row.id, TripDatabase.RAW_PURGED_RETENTION, now)
+                    ActivityLog.log("trip_purged", row.folder, "policy" to "retention")
                 }
             } catch (e: Exception) {
-                Log.e("DrivingService", "Could not evaluate archived trip ${trip.name}", e)
+                Log.e("DrivingService", "Could not purge archived trip ${row.folder}", e)
             }
         }
     }
@@ -893,7 +970,8 @@ class DrivingService : Service() {
                         index + 1
                     )
                     try {
-                        if (finalizeTrip(store, trip, relocate = false) is FinalizeResult.Completed) rebuilt++
+                        if (finalizeTrip(store, trip, relocate = false,
+                                tripState = TripDatabase.STATE_ARCHIVE) is FinalizeResult.Completed) rebuilt++
                     } catch (e: Exception) {
                         Log.e("DrivingService", "Rebuild failed for ${trip.name}", e)
                     }

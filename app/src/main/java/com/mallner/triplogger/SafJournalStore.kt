@@ -47,10 +47,9 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
         pending.findFile(tripId)?.delete()
         val dir = pending.createDirectory(tripId) ?: throw IOException("Cannot create trip directory $tripId")
 
-        writeFile(dir, "trip.properties",
-            "trip_id=$tripId\nstart_ms=$startMs\npids=${pids.joinToString(",")}\n" +
-                "tz_id=${TripFormats.deviceZoneId()}\ntz_offset_min=${TripFormats.deviceOffsetMin(startMs)}\n" +
-                if (trigger.isNotEmpty()) "trigger=$trigger\n" else "")
+        // Trip metadata (start, pids, tz, trigger) lives in triplogger.db;
+        // the journal folder carries only CSV data. The caller pairs this
+        // folder with a trips row through the same tripId.
 
         // Segment files are created lazily: index 0 when the journal opens,
         // higher indices on each split().
@@ -72,23 +71,12 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
             ?: context.contentResolver.openOutputStream(doc.uri, "w")
             ?: throw IOException("Cannot open output stream for ${doc.name}")
 
-    private fun writeFile(dir: DocumentFile, name: String, text: String) {
-        dir.findFile(name)?.delete()
-        dir.findFile("$name.txt")?.delete()
-        // "application/octet-stream" keeps the exact file name; text/plain makes
-        // the external-storage provider append .txt to unknown extensions, which
-        // used to hide orphaned trips from crash recovery.
-        val doc = dir.createFile("application/octet-stream", name) ?: throw IOException("Cannot create $name")
-        context.contentResolver.openOutputStream(doc.uri, "w")?.use { it.write(text.toByteArray()) }
-            ?: throw IOException("Cannot write $name")
-    }
-
     override fun unfinishedTrips(): List<OrphanTrip> {
         val trips = ArrayList<OrphanTrip>()
         for (sub in listOfNotNull(root.findFile("pending"), root.findFile("failed"))) {
             if (!sub.isDirectory) continue
             sub.listFiles()
-                .filter { it.isDirectory && hasProps(it) }
+                .filter { it.isDirectory }
                 .sortedBy { it.name }
                 .forEach { trips.add(SafOrphanTrip(context, it)) }
         }
@@ -101,17 +89,14 @@ class SafJournalStore(private val context: Context, treeUri: Uri) : JournalStore
 
     private fun tripsUnder(name: String): List<OrphanTrip> =
         root.findFile(name)?.takeIf { it.isDirectory }?.listFiles()
-            ?.filter { it.isDirectory && hasProps(it) }
+            ?.filter { it.isDirectory }
             ?.sortedBy { it.name }
             ?.map { SafOrphanTrip(context, it) as OrphanTrip }
             ?: emptyList()
 
-    private fun hasProps(dir: DocumentFile): Boolean =
-        dir.findFile("trip.properties") != null || dir.findFile("trip.properties.txt") != null
-
     override fun archivedTrips(): List<OrphanTrip> =
         archiveDir().listFiles()
-            .filter { it.isDirectory && hasProps(it) }
+            .filter { it.isDirectory }
             .sortedBy { it.name }
             .map { SafOrphanTrip(context, it) as OrphanTrip }
 
@@ -166,14 +151,20 @@ class SafOrphanTrip(private val context: Context, val dir: DocumentFile) : Orpha
     }
 
     override fun writeText(fileName: String, text: String) {
-        // Same octet-stream trick as SafJournalStore.writeFile: keeps the exact
-        // file name on external-storage providers (text/plain appends .txt).
+        // The "application/octet-stream" MIME keeps the exact file name on
+        // external-storage providers (text/plain appends .txt to unknown
+        // extensions, which used to hide orphaned trips from recovery).
         dir.findFile(fileName)?.delete()
         dir.findFile("$fileName.txt")?.delete()
         val doc = dir.createFile("application/octet-stream", fileName)
             ?: throw IOException("Cannot create $fileName in ${dir.name}")
         context.contentResolver.openOutputStream(doc.uri, "w")?.use { it.write(text.toByteArray()) }
             ?: throw IOException("Cannot write $fileName")
+    }
+
+    override fun deleteProps() {
+        // Older journals saved trip.properties as trip.properties.txt (SAF MIME quirk).
+        (dir.findFile("trip.properties") ?: dir.findFile("trip.properties.txt"))?.delete()
     }
 
     override fun listFileNames(): List<String> =

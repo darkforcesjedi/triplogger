@@ -71,6 +71,21 @@ interface JournalStore {
 
     /** Handle for reading back a journal that was just closed (same directory). */
     fun orphanOf(journal: LiveJournal): OrphanTrip
+
+    /**
+     * One trip folder on disk with the state directory it lives in; feeds
+     * [Reconciliation] (name/state/content) and the properties importer.
+     */
+    data class StoredFolder(val name: String, val state: String, val trip: OrphanTrip) {
+        /** Any file at all: empty scratch directories never count as trips. */
+        val hasContent: Boolean get() = trip.listFileNames().isNotEmpty()
+    }
+
+    /** Every trip folder across pending/archive/failed, oldest name first. */
+    fun allTripFolders(): List<StoredFolder> =
+        pendingTrips().map { StoredFolder(it.name, TripDatabase.STATE_PENDING, it) } +
+            archivedTrips().map { StoredFolder(it.name, TripDatabase.STATE_ARCHIVE, it) } +
+            failedTrips().map { StoredFolder(it.name, TripDatabase.STATE_FAILED, it) }
 }
 
 /**
@@ -236,6 +251,9 @@ abstract class OrphanTrip(val name: String) {
     /** All file names in the trip directory (used to discover segments). */
     abstract fun listFileNames(): List<String>
 
+    /** Remove the legacy trip.properties file once its data lives in the DB. */
+    abstract fun deleteProps()
+
     fun readProps(): Map<String, String> {
         val props = HashMap<String, String>()
         readText("trip.properties")?.lineSequence()?.forEach { line ->
@@ -391,13 +409,7 @@ abstract class OrphanTrip(val name: String) {
         return rows
     }
 
-    fun isEmpty(): Boolean {
-        val headerAllowance = LiveJournal.GPS_HEADER.length + LiveJournal.obdHeader(pids()).length + 8
-        var dataBytes = 0
-        segments("gps").mapNotNull { readText(it) }.forEach { dataBytes += it.length }
-        segments("obd").mapNotNull { readText(it) }.forEach { dataBytes += it.length }
-        return dataBytes <= headerAllowance
-    }
+    fun isEmpty(): Boolean = entryCount() == 0
 
     /**
      * Number of journal data lines (headers excluded), taking the larger of
@@ -533,6 +545,11 @@ class FileJournalStore(private val root: File) : JournalStore {
 class FileOrphanTrip(val dir: File) : OrphanTrip(dir.name) {
     override fun readText(fileName: String): String? =
         File(dir, fileName).takeIf { it.isFile }?.readText()
+
+    override fun deleteProps() {
+        File(dir, "trip.properties").delete()
+        File(dir, "trip.properties.txt").delete()
+    }
 
     override fun writeText(fileName: String, text: String) {
         File(dir, fileName).writeText(text)

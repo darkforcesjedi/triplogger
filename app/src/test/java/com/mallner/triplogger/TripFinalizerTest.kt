@@ -113,6 +113,113 @@ class TripFinalizerTest {
         org.junit.Assert.assertNotEquals(DistanceEstimators.SOURCE_ODO, props["distance_src"])
     }
 
+    /** Captures every [TripMetadataWriter] call the finalizer makes. */
+    private class FakeMeta : TripMetadataWriter {
+        var conversion: List<Any?>? = null
+        val metrics = mutableListOf<List<Any?>>()
+        val ext = mutableMapOf<String, String?>()
+        val outputs = mutableSetOf<Pair<String, String>>()
+        var odoReadings: List<Pair<Long, Double>>? = null
+
+        override fun recordConversion(
+            tripId: String, endMs: Long, entries: Int, segments: Int,
+            distanceSource: String?, convertedAt: Long, appVersion: String?,
+            rawBytes: Long?, rawFileCount: Int?
+        ) {
+            conversion = listOf(tripId, endMs, entries, segments, distanceSource, convertedAt, appVersion, rawBytes, rawFileCount)
+        }
+
+        override fun putMetric(tripId: String, kind: String, source: String, value: Double, note: String?) {
+            metrics += listOf(tripId, kind, source, value, note)
+        }
+
+        override fun setExt(tripId: String, key: String, value: String?) {
+            ext[key] = value
+        }
+
+        override fun rememberOutput(tripId: String, kind: String, name: String, bytes: Long?) {
+            outputs += kind to name
+        }
+
+        override fun replaceOdoReadings(tripId: String, readings: List<Pair<Long, Double>>) {
+            odoReadings = readings
+        }
+    }
+
+    @Test
+    fun metaWriterReceivesAllDerivedData() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val journal = store.createTrip("20260119_121000", day1Noon + 600_000, listOf("0D"))
+        repeat(10) { i ->
+            journal.append(GpsRow(day1Noon + 600_000 + i * 1000, day1Noon + 600_000 + i * 1000, 37.39 + i * 0.001, -122.08, 40.0, 12.5f, 180f, 5f))
+        }
+        repeat(10) { i ->
+            journal.append(ObdRow(day1Noon + 600_000 + i * 1000, null, null, null, null, mapOf("0D" to 45.0)))
+        }
+        journal.appendOdometer(day1Noon + 600_000, 57215.8)
+        journal.appendOdometer(day1Noon + 615_000, 57215.9)
+        journal.close()
+
+        val trip = store.orphanOf(journal)
+        val kmzDir = tmp.newFolder("kmz-meta")
+        val meta = FakeMeta()
+        val result = TripFinalizer.finalize(
+            trip,
+            FinalizeSettings(listOf("0D"), generateKmz = true, saveOds = false, appVersionName = "1.3"),
+            DirStorage(kmzDir), null, FakePlotRenderer,
+            meta = meta,
+            target = FinalizeTarget("t${day1Noon + 600_000}", day1Noon + 600_000, null, listOf("0D"), null)
+        )
+        assertTrue(result is FinalizeResult.Completed)
+
+        val conversion = meta.conversion!!
+        assertEquals("t${day1Noon + 600_000}", conversion[0])   // row id, not folder
+        assertEquals(1, conversion[3])                          // one gps segment
+        assertEquals(DistanceEstimators.SOURCE_ODO, conversion[4])
+        assertEquals("1.3", conversion[6])
+
+        val distances = meta.metrics.filter { it[1] == "distance_m" }.associate { it[2] to it[3] }
+        assertEquals(
+            setOf(
+                DistanceEstimators.SOURCE_TRACK, DistanceEstimators.SOURCE_GPS_SPEED,
+                DistanceEstimators.SOURCE_OBD, DistanceEstimators.SOURCE_ODO
+            ),
+            distances.keys
+        )
+        val odoWindow = meta.metrics.filter { it[1] == "odo_km" }.associate { it[2] to it[3] }
+        assertEquals(mapOf("start" to 57215.8, "end" to 57215.9), odoWindow)
+        assertEquals(57215.8, (meta.odoReadings?.firstOrNull()?.second ?: 0.0), 1e-9)
+        assertEquals(setOf("kmz_day" to "2026-01-19.kmz"), meta.outputs)
+        assertEquals("1", meta.ext["distance_algo"])
+        org.junit.Assert.assertNull(meta.ext["distance_odo_note"])
+        // The row is the record now: no trip.properties is left behind.
+        assertTrue(trip.readProps().isEmpty())
+    }
+
+    @Test
+    fun metaWriterNotesRejectedOdometer() {
+        val store = FileJournalStore(tmp.newFolder("journal"))
+        val journal = store.createTrip("20260119_122000", day1Noon + 1_200_000, listOf("0D"))
+        repeat(10) { i ->
+            journal.append(GpsRow(day1Noon + 1_200_000 + i * 1000, day1Noon + 1_200_000 + i * 1000, 37.39 + i * 0.001, -122.08, 40.0, 12.5f, 180f, 5f))
+        }
+        journal.appendOdometer(day1Noon + 1_200_000, 100.0)
+        journal.appendOdometer(day1Noon + 1_815_000, 120.0) // 20 km over a ~1 km trip
+        journal.close()
+
+        val meta = FakeMeta()
+        TripFinalizer.finalize(
+            store.orphanOf(journal),
+            FinalizeSettings(listOf("0D"), false, false),
+            null, null, FakePlotRenderer,
+            meta = meta,
+            target = FinalizeTarget("t${day1Noon + 1_200_000}", day1Noon + 1_200_000, null, listOf("0D"), null)
+        )
+        assertTrue(meta.metrics.none { it[1] == "distance_m" && it[2] == DistanceEstimators.SOURCE_ODO })
+        assertTrue((meta.ext["distance_odo_note"] ?: "").contains("jumped"))
+        org.junit.Assert.assertNotEquals(DistanceEstimators.SOURCE_ODO, meta.conversion!![4])
+    }
+
     @Test
     fun emptyTripIsSkipped() {
         val store = FileJournalStore(tmp.newFolder("journal"))

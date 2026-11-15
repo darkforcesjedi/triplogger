@@ -18,7 +18,7 @@ import java.util.UUID
  * Must be used from a background dispatcher (SQLite I/O in the journal
  * root can be slow on shared storage).
  */
-class TripMetadataStore(context: Context, private val rootDir: File) {
+class TripMetadataStore(context: Context, private val rootDir: File) : TripMetadataWriter {
 
     private val helper = TripDatabase(context, File(rootDir, TripDatabase.DB_FILE_NAME))
 
@@ -258,6 +258,7 @@ class TripMetadataStore(context: Context, private val rootDir: File) {
     }
 
     fun setTitle(tripId: String, title: String?) = setTripColumn(tripId, "title", title)
+    fun setTzName(tripId: String, tzName: String?) = setTripColumn(tripId, "tz_name", tzName)
     fun setStatusReason(tripId: String, reason: String?) = setTripColumn(tripId, "status_reason", reason)
     fun setState(tripId: String, state: String) = setTripColumn(tripId, "state", state)
     fun setCategory(tripId: String, categoryId: Long?) = setTripColumn(tripId, "category_id", categoryId)
@@ -288,7 +289,7 @@ class TripMetadataStore(context: Context, private val rootDir: File) {
     }
 
     /** Finalization writes: derived summary fields in one transaction. */
-    fun recordConversion(
+    override fun recordConversion(
         tripId: String,
         endMs: Long,
         entries: Int,
@@ -338,7 +339,7 @@ class TripMetadataStore(context: Context, private val rootDir: File) {
             }
         }
 
-    fun putMetric(tripId: String, kind: String, source: String, value: Double, note: String? = null) =
+    override fun putMetric(tripId: String, kind: String, source: String, value: Double, note: String?) =
         write { db ->
             db.execSQL(
                 "INSERT OR REPLACE INTO metrics(trip_id, kind, source, value, note) VALUES(?,?,?,?,?)",
@@ -361,7 +362,7 @@ class TripMetadataStore(context: Context, private val rootDir: File) {
             "SELECT value FROM trip_ext WHERE trip_id=? AND key=?", arrayOf(tripId, key)
         ).use { if (it.moveToFirst()) it.getString(0) else null }
 
-    fun setExt(tripId: String, key: String, value: String?) = write { db ->
+    override fun setExt(tripId: String, key: String, value: String?) = write { db ->
         if (value == null) {
             db.execSQL("DELETE FROM trip_ext WHERE trip_id=? AND key=?", arrayOf(tripId, key))
         } else {
@@ -372,7 +373,7 @@ class TripMetadataStore(context: Context, private val rootDir: File) {
         }
     }
 
-    fun rememberOutput(tripId: String, kind: String, name: String, bytes: Long?) = write { db ->
+    override fun rememberOutput(tripId: String, kind: String, name: String, bytes: Long?) = write { db ->
         db.execSQL(
             "INSERT OR REPLACE INTO outputs(trip_id, kind, name, bytes, created_at) VALUES(?,?,?,?,?)",
             arrayOf(tripId, kind, name, bytes, System.currentTimeMillis())
@@ -395,6 +396,37 @@ class TripMetadataStore(context: Context, private val rootDir: File) {
             arrayOf(tripId, ts, km)
         )
     }
+
+    /** Mirror of odo.csv after conversion (idempotent re-runs included). */
+    override fun replaceOdoReadings(tripId: String, readings: List<Pair<Long, Double>>) = write { db ->
+        db.execSQL("DELETE FROM odo_readings WHERE trip_id=?", arrayOf(tripId))
+        readings.forEach { (ts, km) ->
+            db.execSQL(
+                "INSERT OR IGNORE INTO odo_readings(trip_id, ts, km) VALUES(?,?,?)",
+                arrayOf(tripId, ts, km)
+            )
+        }
+    }
+
+    /** One kind across every trip: trip id -> source -> value (Trips tab list). */
+    fun metricsIndex(kind: String): Map<String, Map<String, Double>> =
+        helper.readableDatabase.rawQuery(
+            "SELECT trip_id, source, value FROM metrics WHERE kind=?", arrayOf(kind)
+        ).use { c ->
+            buildMap<String, MutableMap<String, Double>> {
+                while (c.moveToNext()) {
+                    getOrPut(c.getString(0)) { mutableMapOf() }[c.getString(1)] = c.getDouble(2)
+                }
+            }
+        }
+
+    /** One output kind across every trip: trip id -> file name. */
+    fun outputsIndex(kind: String): Map<String, String> =
+        helper.readableDatabase.rawQuery(
+            "SELECT trip_id, name FROM outputs WHERE kind=?", arrayOf(kind)
+        ).use { c ->
+            buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) }
+        }
 
     fun odoReadings(tripId: String): List<Pair<Long, Double>> =
         helper.readableDatabase.rawQuery(

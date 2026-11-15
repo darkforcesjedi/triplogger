@@ -2,9 +2,11 @@ package com.mallner.triplogger
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -12,9 +14,49 @@ import kotlinx.coroutines.withContext
 /** Storage factories shared by the service and the Trips tab actions. */
 object Storage {
 
+    private const val TAG = "Storage"
+
+    /** One metadata store per journal root for the life of the process. */
+    private val metadataStores = ConcurrentHashMap<String, TripMetadataStore?>()
+
+    @Volatile
+    private var unavailableReported = false
+
     fun journalStore(context: Context, settings: AppSettings): JournalStore? {
         if (settings.tempLocationUri.isEmpty()) return null
         return runCatching { SafJournalStore(context, Uri.parse(settings.tempLocationUri)) }.getOrNull()
+    }
+
+    /**
+     * Trip metadata database for the configured journal root: opened lazily
+     * at a File inside the SAF tree (primary external storage only). Null
+     * when no root is set, the folder is not on primary storage, or the
+     * file cannot be opened (corruption; the restore flow arrives later).
+     */
+    fun metadataStore(context: Context, settings: AppSettings): TripMetadataStore? {
+        val uri = settings.tempLocationUri
+        if (uri.isEmpty()) return null
+        metadataStores[uri]?.let { return it }
+        return synchronized(metadataStores) {
+            metadataStores[uri]?.let { return it }
+            val store = runCatching {
+                val root = JournalPath.rootDir(uri)
+                if (root == null) {
+                    Log.w(TAG, "Journal root not resolvable to filesystem storage: $uri")
+                    null
+                } else {
+                    TripMetadataStore(context.applicationContext, root)
+                }
+            }.onFailure { Log.e(TAG, "Cannot open trip metadata database", it) }.getOrNull()
+            if (store != null) {
+                metadataStores[uri] = store
+            } else if (!unavailableReported) {
+                // One activity entry per process: explains an empty Trips tab.
+                unavailableReported = true
+                ActivityLog.log("db_unavailable", "trip metadata database cannot be opened")
+            }
+            store
+        }
     }
 
     /** Output folder (KMZ/ODS); falls back to the legacy combined folder. */
@@ -27,8 +69,9 @@ object Storage {
 
 enum class TripSection { ARCHIVE, PENDING, FAILED }
 
-/** One row of the Trips tab, built purely from journal metadata (no CSV reads). */
+/** One row of the Trips tab, built purely from the metadata DB (no CSV reads). */
 data class TripEntry(
+    val tripId: String,
     val name: String,
     val section: TripSection,
     val startMs: Long,
@@ -51,8 +94,13 @@ data class TripEntry(
     val kmzDay: String?,
     val odsFile: String?,
     val statusReason: String?,
-    val appVersionName: String?
+    val appVersionName: String?,
+    /** Raw journal lifecycle state (present | purged_* | missing). */
+    val rawState: String = TripDatabase.RAW_PRESENT
 ) {
+    /** Raw journal files are still on disk (sample-reading actions need this). */
+    val hasRawData: Boolean get() = rawState == TripDatabase.RAW_PRESENT
+
     /** Distance to present: best multi-source estimate, else the legacy value. */
     val bestDistanceM: Double?
         get() = distanceSrc?.let { distanceSources[it] }
@@ -95,10 +143,11 @@ data class TripEntry(
 }
 
 /**
- * Reads the journal store for the Trips tab and performs its actions
- * (rename, discard, re-run post-processing, placename lookup, clear failed).
- * All work happens on IO; SAF permissions are held by the app process, so
- * the UI can act without going through the service.
+ * Reads the metadata database for the Trips tab and performs its actions
+ * (rename, discard, re-run post-processing, placename lookup, clear failed);
+ * journal folders stay the raw-data layer, addressed through the row's
+ * folder column. All work happens on IO; SAF permissions are held by the
+ * app process, so the UI can act without going through the service.
  */
 class TripsRepository(private val context: Context) {
 
@@ -108,70 +157,89 @@ class TripsRepository(private val context: Context) {
 
     suspend fun load(): List<TripEntry> = withContext(Dispatchers.IO) {
         val settings = snapshot()
-        val store = Storage.journalStore(context, settings) ?: return@withContext emptyList()
-        val archive = store.archivedTrips().map { it to TripSection.ARCHIVE }
-        val pending = store.pendingTrips().map { it to TripSection.PENDING }
-        val failed = store.failedTrips().map { it to TripSection.FAILED }
-        (archive + pending + failed).map { (trip, section) -> toEntry(trip, section) }
-            .sortedByDescending { it.startMs }
+        val db = JournalSync.ensureSynced(context, settings) ?: return@withContext emptyList()
+        val distances = db.metricsIndex("distance_m")
+        val maxSpeeds = db.metricsIndex("max_speed_mps")
+        val kmzDays = db.outputsIndex("kmz_day")
+        val odsFiles = db.outputsIndex("ods")
+        db.trips().map { row ->
+            toEntry(row, distances[row.id], maxSpeeds[row.id]?.values?.firstOrNull(),
+                kmzDays[row.id], odsFiles[row.id])
+        }
     }
 
-    private fun toEntry(trip: OrphanTrip, section: TripSection): TripEntry {
-        val props = trip.readProps()
-        return TripEntry(
-            name = trip.name,
-            section = section,
-            startMs = trip.startMs(),
-            endMs = trip.endMs(),
-            entries = props["entries"]?.toIntOrNull() ?: 0,
-            distanceM = trip.distanceM(),
-            distanceSrc = trip.distanceSrc(),
-            distanceSources = trip.distanceEstimates(),
-            maxSpeedMps = trip.maxSpeedMps(),
-            segments = trip.segmentsCount(),
-            title = trip.title(),
-            trigger = trip.trigger(),
-            tzId = trip.tzId(),
-            tzName = trip.tzName(),
-            placeStart = trip.placeStart(),
-            placeEnd = trip.placeEnd(),
-            converted = trip.isConverted(),
-            kmzDay = trip.kmzDay(),
-            odsFile = trip.odsFile(),
-            statusReason = trip.statusReason(),
-            appVersionName = trip.appVersionName()
-        )
+    private fun toEntry(
+        row: TripMetadataStore.TripRow,
+        distanceSources: Map<String, Double>?,
+        maxSpeed: Double?,
+        kmzName: String?,
+        odsFile: String?
+    ) = TripEntry(
+        tripId = row.id,
+        name = row.folder,
+        section = when (row.state) {
+            TripDatabase.STATE_ARCHIVE -> TripSection.ARCHIVE
+            TripDatabase.STATE_FAILED -> TripSection.FAILED
+            else -> TripSection.PENDING
+        },
+        startMs = row.startMs,
+        endMs = row.endMs ?: 0L,
+        entries = row.entries,
+        distanceM = distanceSources?.get(DistanceEstimators.SOURCE_TRACK) ?: Double.NaN,
+        distanceSrc = row.distanceSource,
+        distanceSources = distanceSources ?: emptyMap(),
+        maxSpeedMps = maxSpeed?.toFloat() ?: Float.NaN,
+        segments = row.segments,
+        title = row.title,
+        trigger = row.trigger,
+        tzId = row.tzId,
+        tzName = row.tzName,
+        placeStart = row.placeStart,
+        placeEnd = row.placeEnd,
+        converted = row.convertedAt != null,
+        kmzDay = kmzName?.removeSuffix(".kmz"),
+        odsFile = odsFile,
+        statusReason = row.statusReason,
+        appVersionName = row.appVersion,
+        rawState = row.rawState
+    )
+
+    private suspend fun metadataStore(): TripMetadataStore? =
+        JournalSync.ensureSynced(context, snapshot())
+
+    private suspend fun rowFor(entry: TripEntry): Pair<TripMetadataStore, TripMetadataStore.TripRow> {
+        val db = metadataStore() ?: error("Trip metadata database unavailable")
+        return Pair(db, db.tripByFolder(entry.name) ?: error("Trip ${entry.name} not in database"))
     }
 
     /**
-     * Set/clear the trip title: persisted in trip.properties and, when the
-     * trip was converted, reflected in the KMZ placemark name and chart
-     * caption via an in-place edit (matched by the stable track id, so no
+     * Set/clear the trip title: stored in the trips row and, when the trip
+     * was converted, reflected in the KMZ placemark name and chart caption
+     * via an in-place edit (matched by the stable track id, so no
      * re-processing and no duplicate tracks).
      */
     suspend fun setTitle(entry: TripEntry, title: String?): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val settings = snapshot()
-            val store = Storage.journalStore(context, settings)
-                ?: error("Temporary storage unavailable")
-            val trip = findTrip(store, entry.name) ?: error("Trip ${entry.name} not found")
-            trip.mergeProps(mapOf("title" to title))
+            val (db, row) = rowFor(entry)
+            val clean = title?.replace('\n', ' ')?.replace('\r', ' ')?.trim()?.takeIf { it.isNotEmpty() }
+            db.setTitle(row.id, clean)
 
-            val day = trip.kmzDay()
+            val day = db.outputsIndex("kmz_day")[row.id]?.removeSuffix(".kmz")
             if (day != null) {
                 Storage.outputStorage(context, settings, settings.kmzLocationUri)?.let { kmz ->
                     runCatching {
                         val bytes = kmz.read("$day.kmz") ?: return@runCatching
                         val edited = DailyKmz.renamePlacemark(
                             bytes,
-                            listOf(trip.trackId(), trip.legacyTrackId()),
-                            title?.takeIf { it.isNotBlank() }
+                            listOf("t${row.startMs}", legacyTrackId(row)),
+                            clean
                         ) ?: return@runCatching
                         kmz.write("$day.kmz", edited)
                     }
                 }
             }
-            ActivityLog.log("trip_renamed", entry.name, "title" to (title ?: ""))
+            ActivityLog.log("trip_renamed", entry.name, "title" to (clean ?: ""))
         }
     }
 
@@ -181,10 +249,11 @@ class TripsRepository(private val context: Context) {
             val settings = snapshot()
             val store = Storage.journalStore(context, settings)
                 ?: error("Temporary storage unavailable")
+            val (db, row) = rowFor(entry)
             findTrip(store, entry.name)?.let { store.relocate(it, toArchive = false) }
                 ?: error("Trip ${entry.name} not found")
-            store.failedTrips().firstOrNull { it.name == entry.name }
-                ?.mergeProps(mapOf("status_reason" to "discarded by user"))
+            db.relocate(row.id, null, TripDatabase.STATE_FAILED)
+            db.setStatusReason(row.id, "discarded by user")
             ActivityLog.log("trip_discarded_manual", entry.name)
         }
     }
@@ -200,6 +269,7 @@ class TripsRepository(private val context: Context) {
             val store = Storage.journalStore(context, settings)
                 ?: error("Temporary storage unavailable")
             val trip = findTrip(store, entry.name) ?: error("Trip ${entry.name} not found")
+            val (db, row) = rowFor(entry)
             val kmzStorage = if (settings.generateKmz) Storage.outputStorage(context, settings, settings.kmzLocationUri) else null
             val odsStorage = if (settings.saveOds) Storage.outputStorage(context, settings, settings.odsLocationUri) else null
 
@@ -214,16 +284,20 @@ class TripsRepository(private val context: Context) {
                 ),
                 kmzStorage,
                 odsStorage,
-                AndroidPlotRenderer(context)
+                AndroidPlotRenderer(context),
+                meta = db,
+                target = row.toTarget()
             )
             when (result) {
                 is FinalizeResult.Completed -> {
-                    if (entry.section != TripSection.ARCHIVE) store.relocate(trip, toArchive = true)
+                    if (entry.section != TripSection.ARCHIVE) {
+                        store.relocate(trip, toArchive = true)
+                        db.relocate(row.id, null, TripDatabase.STATE_ARCHIVE)
+                    }
                     ActivityLog.log("trip_reconverted", entry.name)
                 }
                 is FinalizeResult.Failed -> {
-                    store.failedTrips().firstOrNull { it.name == entry.name }
-                        ?.mergeProps(mapOf("status_reason" to (result.error.message ?: "conversion failed")))
+                    db.setStatusReason(row.id, result.error.message ?: "conversion failed")
                     error(result.error.message ?: "conversion failed")
                 }
                 is FinalizeResult.Skipped -> error(result.reason)
@@ -235,11 +309,16 @@ class TripsRepository(private val context: Context) {
     suspend fun clearFailed(): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val settings = snapshot()
-            val store = Storage.journalStore(context, settings) ?: return@runCatching 0
-            val failed = store.failedTrips()
-            failed.forEach { store.delete(it) }
-            ActivityLog.log("failed_cleared", "${failed.size} trips")
-            failed.size
+            val db = metadataStore() ?: return@runCatching 0
+            val store = Storage.journalStore(context, settings)
+            val rows = db.trips(TripDatabase.STATE_FAILED)
+            val folders = store?.failedTrips()?.associateBy { it.name } ?: emptyMap()
+            rows.forEach { row ->
+                folders[row.folder]?.let { runCatching { store?.delete(it) } }
+                db.deleteTrip(row.id)
+            }
+            ActivityLog.log("failed_cleared", "${rows.size} trips")
+            rows.size
         }
     }
 
@@ -254,7 +333,9 @@ class TripsRepository(private val context: Context) {
             val store = Storage.journalStore(context, settings)
                 ?: error("Temporary storage unavailable")
             val trip = findTrip(store, tripName) ?: error("Trip $tripName not found")
-            if (!resolvePlaces(store, trip)) error("Lookup failed")
+            val db = metadataStore() ?: error("Trip metadata database unavailable")
+            val row = db.tripByFolder(tripName) ?: error("Trip $tripName not in database")
+            if (!resolvePlaces(db, row, trip)) error("Lookup failed")
         }
     }
 
@@ -262,24 +343,29 @@ class TripsRepository(private val context: Context) {
      * Bulk placename resolution across archived trips ("Apply to archived
      * trips"). [untaggedOnly] skips trips that already have a placename;
      * progress reports per trip. Nominatim rate limits apply - two requests
-     * per trip at one per second, hence "this may take a while".
+     * per trip at one per second, hence "this may take a while". Trips whose
+     * raw journals were purged are skipped (nothing to resolve from).
      */
     suspend fun lookUpAll(untaggedOnly: Boolean, onProgress: (Int, Int, String) -> Unit): Int =
         withContext(Dispatchers.IO) {
             val settings = snapshot()
+            val db = JournalSync.ensureSynced(context, settings) ?: return@withContext 0
             val store = Storage.journalStore(context, settings) ?: return@withContext 0
-            val trips = store.archivedTrips()
-                .filter { !untaggedOnly || it.placeStart().isNullOrEmpty() }
+            val folders = store.archivedTrips().associateBy { it.name }
+            val rows = db.trips(TripDatabase.STATE_ARCHIVE)
+                .filter { it.rawState == TripDatabase.RAW_PRESENT }
+                .filter { !untaggedOnly || it.placeStart.isNullOrEmpty() }
             var done = 0
             var resolved = 0
-            for (trip in trips) {
-                val label = trip.title() ?: trip.name
-                onProgress(done, trips.size, label)
-                runCatching { if (resolvePlaces(store, trip)) resolved++ }
+            for (row in rows) {
+                val label = row.title ?: row.folder
+                onProgress(done, rows.size, label)
+                val trip = folders[row.folder]
+                runCatching { if (trip != null && resolvePlaces(db, row, trip)) resolved++ }
                 done++
             }
-            onProgress(done, trips.size, "")
-            ActivityLog.log("places_lookup_all", "$resolved/${trips.size} trips", "scope" to if (untaggedOnly) "untagged" else "all")
+            onProgress(done, rows.size, "")
+            ActivityLog.log("places_lookup_all", "$resolved/${rows.size} trips", "scope" to if (untaggedOnly) "untagged" else "all")
             resolved
         }
 
@@ -295,7 +381,7 @@ class TripsRepository(private val context: Context) {
         }
 
     /** Two Nominatim calls (start & end, policy-delayed) + metadata persist. */
-    private fun resolvePlaces(store: JournalStore, trip: OrphanTrip): Boolean {
+    private fun resolvePlaces(db: TripMetadataStore, row: TripMetadataStore.TripRow, trip: OrphanTrip): Boolean {
         val points = trip.readGpsRows().filter { !it.latitude.isNaN() && !it.longitude.isNaN() && it.latitude != 0.0 }
         val start = points.firstOrNull() ?: return false
         val end = points.last()
@@ -304,12 +390,8 @@ class TripsRepository(private val context: Context) {
         Thread.sleep(NominatimClient.POLICY_DELAY_MS)
         val endPlace = NominatimClient.lookup(end.latitude, end.longitude) ?: startPlace
 
-        val updates = linkedMapOf(
-            "place_start" to startPlace.name,
-            "place_end" to endPlace.name
-        )
-        startPlace.timezone?.let { updates["tz_name"] = it }
-        trip.mergeProps(updates)
+        db.setPlaces(row.id, startPlace.name, endPlace.name)
+        startPlace.timezone?.let { db.setTzName(row.id, it) }
         ActivityLog.log("places_resolved", trip.name, "start" to (startPlace.name ?: ""))
         return true
     }
@@ -317,4 +399,16 @@ class TripsRepository(private val context: Context) {
     private fun findTrip(store: JournalStore, name: String): OrphanTrip? =
         store.archivedTrips().firstOrNull { it.name == name }
             ?: store.unfinishedTrips().firstOrNull { it.name == name }
+
+    private fun legacyTrackId(row: TripMetadataStore.TripRow): String =
+        TripFormats.tripLabel(row.startMs, row.tzOffsetMin).replace('.', ':')
 }
+
+/** The finalizer view of a trips row. */
+internal fun TripMetadataStore.TripRow.toTarget() = FinalizeTarget(
+    tripId = id,
+    startMs = startMs,
+    title = title,
+    pids = pids?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
+    tzOffsetMin = tzOffsetMin
+)

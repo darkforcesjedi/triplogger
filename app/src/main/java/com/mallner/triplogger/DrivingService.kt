@@ -68,6 +68,7 @@ class DrivingService : Service() {
 
     /** Single-flight guard: two quick onStartCommand calls must not run recovery twice. */
     private val recovering = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val recoveryAttempted = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Volatile private var lastSettings: AppSettings? = null
 
@@ -870,7 +871,14 @@ class DrivingService : Service() {
         }
     }
 
+    /**
+     * Finalizes journals interrupted by a crash once per service instance.
+     * Every UI visit re-asserts the service with startService(), and
+     * onStartCommand must not turn each of those into a recovery pass that
+     * re-toasts discards and rewrites failed folders.
+     */
     private fun recoverPendingJournals() {
+        if (!recoveryAttempted.compareAndSet(false, true)) return
         if (!recovering.compareAndSet(false, true)) return // already running
         serviceScope.launch {
             try {
@@ -879,9 +887,10 @@ class DrivingService : Service() {
                 val settings = appSettingsRepository.appSettingsFlow.first()
                 if (JournalSync.ensureSynced(this@DrivingService, settings) == null) {
                     Log.w("DrivingService", "Metadata database unavailable; recovery deferred")
+                    recoveryAttempted.set(false) // retry on the next start
                     return@launch
                 }
-                val store = journalStore() ?: return@launch
+                val store = journalStore() ?: run { recoveryAttempted.set(false); return@launch }
                 val db = Storage.metadataStore(this@DrivingService, settings)
                 val unfinished = store.pendingTrips().map { it to TripDatabase.STATE_PENDING } +
                     store.failedTrips().map { it to TripDatabase.STATE_FAILED }
@@ -893,6 +902,11 @@ class DrivingService : Service() {
                         runCatching { db?.tripByFolder(trip.name)?.let { db.deleteTrip(it.id) } }
                         continue
                     }
+                    // Discarded trips are user-visible decisions, not
+                    // recoverable work: below-threshold ones would re-toast
+                    // forever, and manual discards must not be converted
+                    // behind the user's back.
+                    if (db?.tripByFolder(trip.name)?.statusReason?.startsWith("discarded") == true) continue
                     Log.i("DrivingService", "Recovering unfinished trip ${trip.name}")
                     ActivityLog.log("trip_recovered", trip.name)
                     try {

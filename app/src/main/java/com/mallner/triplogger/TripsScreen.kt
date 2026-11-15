@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -40,7 +41,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -364,6 +367,11 @@ private fun TripDetail(
         )
 
         Spacer(Modifier.height(16.dp))
+        // The method behind the headline distance reads as an icon; the full
+        // wordy labels would crowd the three-column stat row.
+        val srcIcon = trip.distanceSrc
+            ?.takeIf { trip.distanceSources.size > 1 }
+            ?.let { distanceSourceIcon(it) }
         DetailStatRow(
             stringResource(R.string.trips_stat_distance), formatDistance(trip, usUnits),
             stringResource(R.string.trips_stat_duration), AppNotificationManager.formatChipDuration(trip.durationMs),
@@ -371,7 +379,8 @@ private fun TripDetail(
                 R.string.trips_distance_value,
                 "%.1f".format(UnitFormat.mpsToDisplay(trip.maxSpeedMps.toDouble(), usUnits)),
                 stringResource(if (usUnits) R.string.unit_mph else R.string.unit_kph)
-            )
+            ),
+            leadingIcon1 = srcIcon
         )
         Spacer(Modifier.height(8.dp))
         DetailStatRow(
@@ -400,9 +409,20 @@ private fun TripDetail(
                         DistanceEstimators.SOURCE_GPS_SPEED, DistanceEstimators.SOURCE_TRACK).indexOf(it.key)
                 }.forEach { (source, meters) ->
                     val value = UnitFormat.convert("km", meters / 1000.0, usUnits).first
-                    Row(modifier = Modifier.padding(vertical = 1.dp)) {
+                    val tag = stringResource(distanceSourceLabel(source))
+                    Row(
+                        modifier = Modifier.padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            distanceSourceIcon(source),
+                            contentDescription = tag,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            stringResource(distanceSourceLabel(source)),
+                            tag,
                             fontSize = 12.sp,
                             modifier = Modifier.weight(1f),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -412,9 +432,13 @@ private fun TripDetail(
                                 R.string.trips_distance_value,
                                 "%.1f".format(value),
                                 stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km)
-                            ) + if (source == trip.distanceSrc) "  ★" else "",
+                            ),
                             fontSize = 12.sp
                         )
+                        if (source == trip.distanceSrc) {
+                            Spacer(Modifier.width(6.dp))
+                            Text("★", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             }
@@ -531,19 +555,40 @@ private fun EndPointLine(
 }
 
 @Composable
-private fun DetailStatRow(label1: String, value1: String, label2: String, value2: String, label3: String, value3: String) {
+private fun DetailStatRow(
+    label1: String,
+    value1: String,
+    label2: String,
+    value2: String,
+    label3: String,
+    value3: String,
+    leadingIcon1: Painter? = null
+) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        Stat(label1, value1, Modifier.weight(1f))
+        Stat(label1, value1, Modifier.weight(1f), leadingIcon1)
         Stat(label2, value2, Modifier.weight(1f))
         Stat(label3, value3, Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun Stat(label: String, value: String, modifier: Modifier) {
+private fun Stat(label: String, value: String, modifier: Modifier, leadingIcon: Painter? = null) {
     Column(modifier) {
         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontSize = 14.sp)
+        if (leadingIcon == null) {
+            Text(value, fontSize = 14.sp)
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    leadingIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(value, fontSize = 14.sp)
+            }
+        }
     }
 }
 
@@ -556,11 +601,25 @@ private fun formatDistance(trip: TripEntry, usUnits: Boolean): String {
         "%.1f".format(value),
         stringResource(if (usUnits) R.string.unit_miles else R.string.unit_km)
     )
-    // Name the source when several methods agree to disagree.
-    val src = trip.distanceSrc?.takeIf { trip.distanceSources.size > 1 }
-    return if (src == null) headline
-    else "$headline (${stringResource(distanceSourceLabel(src))})"
+    // The source rides as an icon in the stat row, not as a wordy suffix.
+    return headline
 }
+
+/**
+ * Source glyphs for the distance estimates (vendored Material Symbols: the
+ * classic androidx icon library is frozen before these symbols shipped):
+ * steering wheel = odometer, ring = wheel speed, satellite = GPS Doppler
+ * speed, road pin = GPS track.
+ */
+@Composable
+private fun distanceSourceIcon(source: String): Painter = painterResource(
+    when (source) {
+        DistanceEstimators.SOURCE_ODO -> R.drawable.ic_src_odo
+        DistanceEstimators.SOURCE_OBD -> R.drawable.ic_src_obd
+        DistanceEstimators.SOURCE_GPS_SPEED -> R.drawable.ic_src_gps_speed
+        else -> R.drawable.ic_src_track
+    }
+)
 
 @Composable
 private fun distanceSourceLabel(source: String): Int = when (source) {

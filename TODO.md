@@ -176,6 +176,21 @@ fast path. Design agreed on 2026-11-14/15:
   (journals and outputs are untouched; rescan rebuilds rows, though
   free-form fields go back only as far as the last backup, so the
   journal root belongs in backups).
+- Shipped through Stage C: engine/identity/tables (A), reader/writer
+  flip with migration + reconciliation (B), settings table with the
+  DataStore mirror (C1: temp_location_uri alone stays device-local, it
+  points at the DB; rows win over the mirror when readable, seed on
+  empty covers import and re-picks. DataStore is kept as a live
+  write-through mirror rather than deleted: it is the degraded-mode
+  source whenever no journal DB is open, and boot reads it), activity
+  table with JSONL spool import (C2), backups + restore dialog
+  (C3, VACUUM INTO >= API 30, checkpoint+copy below), storage re-pick
+  Move/Copy/Leave behind (C4).
+  Spec deltas: journal_mode is recorded in meta as designed; Leave
+  behind starts a fresh DB at the new root (the old journal keeps its
+  own DB and rows; the "rows flip to missing" variant applies only if
+  the SAME DB is kept while folders stay behind); per-trip DB-backed
+  samples remain the parked door.
 
 ## KMZ speed-plot PNG names should use the trip id
 

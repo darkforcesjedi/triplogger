@@ -274,6 +274,47 @@ in-memory edit over unzipped content plus a generalized
 editPlacemarks(bytes, List<(trackIds, title)>) that applies any number
 of groups in one unzip/rezip pass, used by both flows.
 
+## Reject trips by distance at post-processing
+
+Finalization can reject journals by entry count
+(discard_below_entries, before any conversion work) and retention purges
+archived trips by duration; with the distance estimators computed at
+finalize time, add a distance-based rejection: "Discard trips shorter
+than X" (unit-aware input, 0 = keep everything). Order the checks by
+cost: entries first (nothing to estimate from an empty journal), then
+the winning estimate (odometer preferred) below threshold -> discard
+with status_reason discarded_distance and skip conversion, mirroring the
+entries path (activity row, toast). Unknown is not short: when no
+estimate exists (no odometer support and too few samples to integrate
+speed), keep the trip. Later, retention can grow the same knob for
+purging raw journals from metrics.distance without needing the folder.
+
+## Resume an interrupted trip after a crash or reboot
+
+Recovery finalizes whatever a crash or reboot left pending, and the
+next trigger event opens a new journal. When the recording conditions
+still hold at recovery time (force logging on, or the trigger device is
+connected), the interruption was incidental and the real trip is
+ongoing: silently resume the pending journal instead of closing it.
+
+- Decide resume vs finalize at the start of the recovery pass: exactly
+  one recoverable pending journal AND conditions hold -> reopen the
+  folder as the current journal (original start time and trip id,
+  append to the last split file), re-register GPS/OBD, skip
+  trip_started. Conditions gone -> today's behavior (finalize, then the
+  next connect starts fresh), so a drive that ended during the dead
+  window still closes cleanly.
+- The trigger check at recovery is the same pattern match the ACL
+  receiver uses against currently connected devices; a boot with the
+  phone still paired to the head unit therefore resumes in the car.
+- UI continuity: the ongoing notification and trip timer already derive
+  from the journal start; seed the live distance accumulator from the
+  existing entries, and odometer continuity is automatic since
+  readings key on the trip id.
+- Journal meta keeps the original start; KMZ day naming, track ids and
+  metrics all follow it. The boot-time race with the temporary
+  allowlist does not apply: resume runs wherever recovery runs today.
+
 ## Activity tab: day-section headers
 
 The Trips tab groups rows under Today / Yesterday / date headers; Activity is

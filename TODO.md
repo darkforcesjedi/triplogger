@@ -237,15 +237,42 @@ with: Reprocess, Categorize, Discard (confirm first, count in message),
 and Clear. Actions apply to all selected trips; pending/failed tiles are
 not selectable for Reprocess. Shares the per-trip action code paths.
 
-## Batch KMZ reprocess writes once per day
+## Batch KMZ output writes (rename + reprocess)
 
-Reprocessing several trips on the same KMZ day currently decompresses,
-merges one track, and recompresses the shared KMZ per trip. For batch
-reprocess (multi-select, rebuild-all): render every trip's PNG + KML
-placemark fragments to temp storage first, then open the day's KMZ once and
-merge all entries in a single read-modify-write. Fewer rewrites, and no
-window where an interrupted run leaves the day KMZ holding only the
-trips merged so far.
+The shared per-day KMZ is a zip: every edit decompresses and recompresses
+the WHOLE day file, so per-trip write paths cost hundreds of KB of churn
+each. An active driver accrues dozens of trips per day. Two use cases,
+one mechanism: read/modify/write each day file exactly once per batch.
+
+1. Deferred renames. Renaming a converted trip today immediately reads,
+   edits, and rewrites the day KMZ (TripsRepository.setTitle ->
+   DailyKmz.renamePlacemark), so renaming ten trips means ten full
+   day-file round trips. Hold KMZ name sync back as "dirty": setTitle
+   writes the database (the truth) and flags the row (name_stale, so
+   pending edits survive process death); tiles show the new title from
+   the DB immediately. When converted trips have pending names, the
+   trip list exposes a bottom bar prompt: "Apply modified names to
+   output files?" Tapping it applies all pending renames at once;
+   navigating away from the Trips tab prompts to apply first (apply now
+   / keep pending). Applying groups rows by kmz_day, and per file: read
+   once, rename every pending placemark (track-id keyed, so the old
+   title is never needed), write once, then clear the flags; failures
+   keep the flag set and say so. Renames on not-yet-converted trips
+   need no flag: finalize uses the current DB title.
+2. Batch reprocess. Reprocessing several trips on the same KMZ day
+   currently decompresses, merges one track, and recompresses per trip
+   (finalizeTrip takes one trip; rebuild-all loops it). For batch
+   reprocess (multi-select, rebuild-all): render every trip's PNG + KML
+   placemark fragments to temp storage first, then open the day's KMZ
+   once and merge all entries in a single read-modify-write. Fewer
+   rewrites, and no window where an interrupted run leaves the day KMZ
+   holding only the trips merged so far.
+
+Implementation: DailyKmz.merge already takes a trip list; renamePlacemark
+takes one (trackIds, title) group per call, so decompose it into an
+in-memory edit over unzipped content plus a generalized
+editPlacemarks(bytes, List<(trackIds, title)>) that applies any number
+of groups in one unzip/rezip pass, used by both flows.
 
 ## Activity tab: day-section headers
 

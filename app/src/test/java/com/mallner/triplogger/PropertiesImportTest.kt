@@ -91,7 +91,10 @@ class PropertiesImportTest {
         assertEquals("20261105_123113", t.ext["trip_id"])
         assertEquals("1", t.ext["distance_algo"])
         assertTrue("converted must be dropped", "converted" !in t.ext)
-        assertTrue("mapped columns must not leak into ext", t.ext.keys.none { it in setOf("title", "end_ms", "pids", "distance_src") })
+        assertTrue(
+            "mapped columns/outputs must not leak into ext",
+            t.ext.keys.none { it in setOf("title", "end_ms", "pids", "distance_src", "kmz_day", "ods_file") }
+        )
     }
 
     @Test

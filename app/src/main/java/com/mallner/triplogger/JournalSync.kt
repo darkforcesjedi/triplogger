@@ -35,9 +35,10 @@ object JournalSync {
         if (scannedUri == settings.tempLocationUri && !force) return db
         mutex.withLock {
             if (scannedUri == settings.tempLocationUri && !force) return db
+            // Failures stay un-stamped so the next caller retries the scan.
             runCatching { scan(context, settings, db) }
+                .onSuccess { scannedUri = settings.tempLocationUri }
                 .onFailure { ActivityLog.log("db_scan_failed", it.message ?: "unknown") }
-            scannedUri = settings.tempLocationUri
             return db
         }
     }

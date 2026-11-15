@@ -53,6 +53,7 @@ object PropertiesImport {
     )
     private val METRIC_KEYS = DISTANCE_KEYS.keys +
         setOf("distance_m", "max_speed_mps", "odo_start_km", "odo_end_km")
+    private val OUTPUT_KEYS = setOf("kmz_day", "ods_file") // become outputs rows
     private val DROPPED_KEYS = setOf("converted") // implied by converted_at
 
     /**
@@ -124,7 +125,8 @@ object PropertiesImport {
         str("ods_file")?.let { outputs += Output("ods", it) }
 
         for ((key, value) in props) {
-            if (key in COLUMN_KEYS || key in METRIC_KEYS || key in DROPPED_KEYS ||
+            if (key in COLUMN_KEYS || key in METRIC_KEYS || key in OUTPUT_KEYS ||
+                key in DROPPED_KEYS ||
                 (key == "distance_src" && columns.containsKey("distance_source"))
             ) continue
             ext[key] = value

@@ -60,9 +60,11 @@ class TripDatabase(context: Context, file: File) :
         // WAL for concurrent UI reads while the service writes; some mounted
         // storage (FUSE/SD adapters) rejects WAL - fall back and remember.
         if (!walMode(db)) {
-            runCatching { db.execSQL("PRAGMA journal_mode=TRUNCATE") }
+            runCatching { db.rawQuery("PRAGMA journal_mode=TRUNCATE", null).use { it.moveToFirst() } }
         }
-        db.execSQL("PRAGMA busy_timeout=5000")
+        // Assignment pragmas answer with a result row, so they must not go
+        // through execSQL on Android ("Queries can be performed ... only").
+        runCatching { db.rawQuery("PRAGMA busy_timeout=5000", null).use { it.moveToFirst() } }
     }
 
     private fun walMode(db: SQLiteDatabase): Boolean = try {

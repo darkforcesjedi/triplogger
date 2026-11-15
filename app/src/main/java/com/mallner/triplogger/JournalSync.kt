@@ -32,6 +32,9 @@ object JournalSync {
      */
     suspend fun ensureSynced(context: Context, settings: AppSettings, force: Boolean = false): TripMetadataStore? {
         val db = Storage.metadataStore(context, settings) ?: return null
+        // Settings live in this database too: attach (and seed a fresh
+        // table) whenever the opened store is not the attached one.
+        SettingsDb.attachFor(db, settings)
         if (scannedUri == settings.tempLocationUri && !force) return db
         mutex.withLock {
             if (scannedUri == settings.tempLocationUri && !force) return db

@@ -10,7 +10,14 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
+
+/** OBD PID list as stored ("P0100,P0101"), cleaned; unknown codes dropped. */
+internal fun sanitizePids(raw: String): List<String> =
+    raw.split(',')
+        .map { it.trim().uppercase() }
+        .filter { it.isNotEmpty() && ObdPids.byHex(it) != null }
+        .distinct()
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -84,46 +91,65 @@ object AppSettingsKeys {
     val RPM_GAUGE_MAX = intPreferencesKey("rpm_gauge_max")
 }
 
+/**
+ * App settings with two synchronized homes (TODO "Trip metadata database",
+ * Stage C): the journal database `settings` table (portable truth, survives
+ * reinstalls through the journal folder) and DataStore (device-local mirror
+ * used while no database is open, plus the pointer to the journal folder).
+ * Reads merge the [SettingsDb] cache over the mirror; every update writes
+ * both, so neither can drift ahead except in degraded mode.
+ */
 class AppSettingsRepository(private val context: Context) {
 
-    val appSettingsFlow: Flow<AppSettings> = context.dataStore.data.map {
-        mapAppSettings(it)
-    }
+    val appSettingsFlow: Flow<AppSettings> =
+        combine(context.dataStore.data, SettingsDb.changes) { prefs, _ ->
+            SettingsCodec.mergeOnto(mapAppSettings(prefs), SettingsDb.snapshot())
+        }
+
+    private suspend fun writeThrough(key: String, value: Any) =
+        SettingsDb.put(key, SettingsCodec.enc(value))
 
     suspend fun updateBluetoothDeviceName(name: String) {
         context.dataStore.edit {
             it[AppSettingsKeys.BLUETOOTH_DEVICE_NAME] = name
         }
+        writeThrough(SettingsCodec.KEY_BLUETOOTH_DEVICE_NAME, name)
     }
 
     suspend fun updateLoggingFrequency(frequency: Int) {
         context.dataStore.edit {
             it[AppSettingsKeys.LOGGING_FREQUENCY] = frequency
         }
+        writeThrough(SettingsCodec.KEY_LOGGING_FREQUENCY, frequency)
     }
 
     suspend fun updateSplitEnabled(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.SPLIT_ENABLED] = enabled
         }
+        writeThrough(SettingsCodec.KEY_SPLIT_ENABLED, enabled)
     }
 
     suspend fun updateMaxSegmentSizeKb(sizeKb: Long) {
+        val size = sizeKb.coerceIn(16L, 1_048_576L)
         context.dataStore.edit {
-            it[AppSettingsKeys.MAX_SEGMENT_SIZE_KB] = sizeKb.coerceIn(16L, 1_048_576L)
+            it[AppSettingsKeys.MAX_SEGMENT_SIZE_KB] = size
         }
+        writeThrough(SettingsCodec.KEY_MAX_SEGMENT_SIZE_KB, size)
     }
 
     suspend fun updateForceLogging(force: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.FORCE_LOGGING] = force
         }
+        writeThrough(SettingsCodec.KEY_FORCE_LOGGING, force)
     }
 
     suspend fun updateStorageLocationUri(uri: String) {
         context.dataStore.edit {
             it[AppSettingsKeys.STORAGE_LOCATION_URI] = uri
         }
+        writeThrough(SettingsCodec.KEY_STORAGE_LOCATION_URI, uri)
     }
 
     suspend fun updateServiceEnabled(enabled: Boolean) {
@@ -131,48 +157,58 @@ class AppSettingsRepository(private val context: Context) {
             it[AppSettingsKeys.SERVICE_ENABLED] = enabled
         }
         BootFlags.setServiceEnabled(context, enabled)
+        writeThrough(SettingsCodec.KEY_SERVICE_ENABLED, enabled)
     }
 
     suspend fun updateGpsEnabled(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.GPS_ENABLED] = enabled
         }
+        writeThrough(SettingsCodec.KEY_GPS_ENABLED, enabled)
     }
 
     suspend fun updateObdEnabled(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.OBD_ENABLED] = enabled
         }
+        writeThrough(SettingsCodec.KEY_OBD_ENABLED, enabled)
     }
 
     suspend fun updateObdDeviceName(name: String) {
         context.dataStore.edit {
             it[AppSettingsKeys.OBD_DEVICE_NAME] = name
         }
+        writeThrough(SettingsCodec.KEY_OBD_DEVICE_NAME, name)
     }
 
     suspend fun updateObdPollIntervalMs(intervalMs: Int) {
+        val interval = intervalMs.coerceIn(250, 60_000)
         context.dataStore.edit {
-            it[AppSettingsKeys.OBD_POLL_INTERVAL_MS] = intervalMs.coerceIn(250, 60_000)
+            it[AppSettingsKeys.OBD_POLL_INTERVAL_MS] = interval
         }
+        writeThrough(SettingsCodec.KEY_OBD_POLL_INTERVAL_MS, interval)
     }
 
     suspend fun updateObdSelectedPids(pids: List<String>) {
+        val raw = pids.joinToString(",")
         context.dataStore.edit {
-            it[AppSettingsKeys.OBD_SELECTED_PIDS] = pids.joinToString(",")
+            it[AppSettingsKeys.OBD_SELECTED_PIDS] = raw
         }
+        writeThrough(SettingsCodec.KEY_OBD_SELECTED_PIDS, raw)
     }
 
     suspend fun updateGenerateKmz(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.GENERATE_KMZ] = enabled
         }
+        writeThrough(SettingsCodec.KEY_GENERATE_KMZ, enabled)
     }
 
     suspend fun updateSaveOds(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.SAVE_ODS] = enabled
         }
+        writeThrough(SettingsCodec.KEY_SAVE_ODS, enabled)
     }
 
     suspend fun updateTempLocationUri(uri: String) {
@@ -186,50 +222,62 @@ class AppSettingsRepository(private val context: Context) {
         context.dataStore.edit {
             it[AppSettingsKeys.KMZ_LOCATION_URI] = uri
         }
+        writeThrough(SettingsCodec.KEY_KMZ_LOCATION_URI, uri)
     }
 
     suspend fun updateOdsLocationUri(uri: String) {
         context.dataStore.edit {
             it[AppSettingsKeys.ODS_LOCATION_URI] = uri
         }
+        writeThrough(SettingsCodec.KEY_ODS_LOCATION_URI, uri)
     }
 
     suspend fun updateUsUnits(us: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.US_UNITS] = us
         }
+        writeThrough(SettingsCodec.KEY_US_UNITS, us)
     }
 
     suspend fun updatePlaceNameLookups(enabled: Boolean) {
         context.dataStore.edit {
             it[AppSettingsKeys.PLACE_NAME_LOOKUPS] = enabled
         }
+        writeThrough(SettingsCodec.KEY_PLACE_NAME_LOOKUPS, enabled)
     }
 
     suspend fun updateArchiveRetentionDays(days: Int) {
+        val v = days.coerceIn(0, 3650)
         context.dataStore.edit {
-            it[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] = days.coerceIn(0, 3650)
+            it[AppSettingsKeys.ARCHIVE_RETENTION_DAYS] = v
         }
+        writeThrough(SettingsCodec.KEY_ARCHIVE_RETENTION_DAYS, v)
     }
 
     suspend fun updateArchiveMinTripSec(seconds: Int) {
+        val v = seconds.coerceIn(0, 86_400)
         context.dataStore.edit {
-            it[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] = seconds.coerceIn(0, 86_400)
+            it[AppSettingsKeys.ARCHIVE_MIN_TRIP_SEC] = v
         }
+        writeThrough(SettingsCodec.KEY_ARCHIVE_MIN_TRIP_SEC, v)
     }
 
     suspend fun updateDiscardBelowEntries(entries: Int) {
+        val v = entries.coerceIn(0, 1_000_000)
         context.dataStore.edit {
-            it[AppSettingsKeys.DISCARD_BELOW_ENTRIES] = entries.coerceIn(0, 1_000_000)
+            it[AppSettingsKeys.DISCARD_BELOW_ENTRIES] = v
         }
+        writeThrough(SettingsCodec.KEY_DISCARD_BELOW_ENTRIES, v)
     }
 
     suspend fun updateShowHybridCharge(enabled: Boolean) {
         context.dataStore.edit { it[AppSettingsKeys.SHOW_HYBRID_CHARGE] = enabled }
+        writeThrough(SettingsCodec.KEY_SHOW_HYBRID_CHARGE, enabled)
     }
 
     suspend fun updateShowFuelLevel(enabled: Boolean) {
         context.dataStore.edit { it[AppSettingsKeys.SHOW_FUEL_LEVEL] = enabled }
+        writeThrough(SettingsCodec.KEY_SHOW_FUEL_LEVEL, enabled)
     }
 
     fun snapTo(value: Int, step: Int, min: Int, max: Int): Int =
@@ -239,15 +287,18 @@ class AppSettingsRepository(private val context: Context) {
         if (us) {
             val v = snapTo(value, 5, 10, 200)
             context.dataStore.edit { it[AppSettingsKeys.SPEED_GAUGE_MAX_US] = v }
+            writeThrough(SettingsCodec.KEY_SPEED_GAUGE_MAX_US, v)
         } else {
             val v = snapTo(value, 5, 10, 350)
             context.dataStore.edit { it[AppSettingsKeys.SPEED_GAUGE_MAX_METRIC] = v }
+            writeThrough(SettingsCodec.KEY_SPEED_GAUGE_MAX_METRIC, v)
         }
     }
 
     suspend fun updateRpmGaugeMax(value: Int) {
         val v = snapTo(value, 500, 1000, 15000)
         context.dataStore.edit { it[AppSettingsKeys.RPM_GAUGE_MAX] = v }
+        writeThrough(SettingsCodec.KEY_RPM_GAUGE_MAX, v)
     }
 
     private fun mapAppSettings(preferences: Preferences): AppSettings {
@@ -263,10 +314,7 @@ class AppSettingsRepository(private val context: Context) {
         val obdDeviceName = preferences[AppSettingsKeys.OBD_DEVICE_NAME] ?: ""
         val obdPollIntervalMs = preferences[AppSettingsKeys.OBD_POLL_INTERVAL_MS] ?: 1000
         val obdSelectedPids = preferences[AppSettingsKeys.OBD_SELECTED_PIDS]
-            ?.split(',')
-            ?.map { it.trim().uppercase() }
-            ?.filter { it.isNotEmpty() && ObdPids.byHex(it) != null } // drops stale/unknown codes
-            ?.distinct()
+            ?.let(::sanitizePids) // drops stale/unknown codes
             ?: ObdPids.DEFAULTS
         val generateKmz = preferences[AppSettingsKeys.GENERATE_KMZ] ?: true
         val saveOds = preferences[AppSettingsKeys.SAVE_ODS] ?: false

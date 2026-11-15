@@ -33,8 +33,11 @@ object Storage {
      * when no root is set, the folder is not on primary storage, or the
      * file cannot be opened (corruption; the restore flow arrives later).
      */
-    fun metadataStore(context: Context, settings: AppSettings): TripMetadataStore? {
-        val uri = settings.tempLocationUri
+    fun metadataStore(context: Context, settings: AppSettings): TripMetadataStore? =
+        metadataStore(context, settings.tempLocationUri)
+
+    /** Uri-string form: settings themselves may live IN the store. */
+    fun metadataStore(context: Context, uri: String): TripMetadataStore? {
         if (uri.isEmpty()) return null
         metadataStores[uri]?.let { return it }
         return synchronized(metadataStores) {

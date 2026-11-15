@@ -200,6 +200,8 @@
     <string name="trips_stat_segments">Segments</string>
     <string name="trips_stat_trigger">Trigger</string>
     <string name="trips_distance_value">%1$s %2$s</string>
+    <string name="trips_unnamed">Unnamed Trip</string>
+    <string name="trips_tile_duration">duration:  %1$s</string>
     <string name="trips_distance_all_toggle">All %1$d distance estimates</string>
     <string name="trips_distance_src_odo">Odometer</string>
     <string name="trips_distance_src_obd">Wheel speed (OBD)</string>

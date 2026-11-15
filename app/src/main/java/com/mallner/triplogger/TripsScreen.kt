@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -263,9 +264,45 @@ private fun TripRow(trip: TripEntry, usUnits: Boolean, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(onClick = onClick),
         colors = CardDefaults.cardColors()
     ) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(trip.displayTitle, fontSize = 15.sp, fontWeight = if (trip.title != null) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+        // One layout for every trip, named or not:
+        //   title (or italic placeholder)
+        //   start time            duration:  <span>
+        //   <distance> · <n> entries        [KMZ] [ODS]
+        Column(modifier = Modifier.padding(12.dp)) {
+            if (trip.title != null) {
+                Text(trip.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            } else {
+                Text(
+                    stringResource(R.string.trips_unnamed),
+                    fontSize = 15.sp,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(trip.startMs)),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    stringResource(
+                        R.string.trips_tile_duration,
+                        if (trip.durationMs > 0) AppNotificationManager.formatChipDuration(trip.durationMs) else "—"
+                    ),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 val stats = listOfNotNull(
                     trip.bestDistanceM?.let {
                         stringResource(
@@ -277,26 +314,7 @@ private fun TripRow(trip: TripEntry, usUnits: Boolean, onClick: () -> Unit) {
                     trip.entries.takeIf { it > 0 }
                         ?.let { pluralStringResource(R.plurals.notification_entries, it, it) }
                 ).joinToString(" · ").ifEmpty { "—" }
-                Text(
-                    stats,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                if (trip.title != null) {
-                    Text(
-                        SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(trip.startMs)),
-                        fontSize = 13.sp
-                    )
-                }
-                if (trip.durationMs > 0) {
-                    Text(
-                        AppNotificationManager.formatChipDuration(trip.durationMs),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(stats, fontSize = 12.sp)
                 Row {
                     if (trip.kmzDay != null) Badge("KMZ")
                     if (trip.odsFile != null) Badge("ODS")

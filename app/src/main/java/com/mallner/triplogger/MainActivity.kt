@@ -82,6 +82,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.mallner.triplogger.ui.theme.TripLoggerTheme
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,6 +92,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ActivityLog.init(this)
+        // Seed/refresh the boot gate mirror from the real settings store.
+        lifecycleScope.launch { runCatching { BootFlags.resync(this@MainActivity) } }
         enableEdgeToEdge()
         setContent {
             TripLoggerTheme {

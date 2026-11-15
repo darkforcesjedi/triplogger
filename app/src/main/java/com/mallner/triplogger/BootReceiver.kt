@@ -5,38 +5,28 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
+/**
+ * Arms the service after a reboot. Everything here must stay SYNCHRONOUS:
+ * the broadcast's temporary-allowlist window is what legally allows the
+ * while-in-use (location) foreground service to start at boot, and any
+ * deferred work (a coroutine, a DataStore read) outlives it. The gate is
+ * the SharedPreferences mirror (BootFlags), a memory-mapped read.
+ *
+ * Samsung also re-fires BOOT_COMPLETED at random times on running devices,
+ * so a refusal here must never crash the process.
+ */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        // goAsync keeps the broadcast (and its service-start eligibility
-        // window) alive while the settings read completes; launching a
-        // detached coroutine and returning used to hand the process back to
-        // "background", where Android 14+ rejects the start outright.
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val settings = AppSettingsRepository(context).appSettingsFlow.first()
-                if (settings.serviceEnabled && settings.tempLocationUri.isNotEmpty()) {
-                    runCatching {
-                        ContextCompat.startForegroundService(
-                            context, Intent(context, DrivingService::class.java)
-                        )
-                    }.onFailure {
-                        // The service starts from the app UI whenever it next
-                        // opens, so a refused boot start is not fatal.
-                        Log.w("BootReceiver", "Boot start refused; service starts with the app", it)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("BootReceiver", "Boot handling failed", e)
-            } finally {
-                pending.finish()
-            }
+        val gate = BootFlags.gate(context)
+        if (!gate.serviceEnabled || !gate.journalSet) return
+        runCatching {
+            ContextCompat.startForegroundService(context, Intent(context, DrivingService::class.java))
+        }.onFailure {
+            // The service starts from the app UI whenever it next opens, so
+            // a refused boot start is not fatal.
+            Log.w("BootReceiver", "Boot start refused; service starts with the app", it)
         }
     }
 }

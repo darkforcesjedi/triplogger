@@ -290,6 +290,9 @@ class DrivingService : Service() {
         super.onCreate()
         ActivityLog.init(this)
         DrivingStatus.isEnabled.value = true
+        // Keep the boot gate mirror fresh; every service start passes through
+        // the real settings anyway (also seeds the mirror after an upgrade).
+        serviceScope.launch { runCatching { BootFlags.resync(this@DrivingService) } }
         appSettingsRepository = AppSettingsRepository(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         notificationManager = AppNotificationManager(this)

@@ -130,6 +130,7 @@ class AppSettingsRepository(private val context: Context) {
         context.dataStore.edit {
             it[AppSettingsKeys.SERVICE_ENABLED] = enabled
         }
+        BootFlags.setServiceEnabled(context, enabled)
     }
 
     suspend fun updateGpsEnabled(enabled: Boolean) {
@@ -178,6 +179,7 @@ class AppSettingsRepository(private val context: Context) {
         context.dataStore.edit {
             it[AppSettingsKeys.TEMP_LOCATION_URI] = uri
         }
+        BootFlags.setJournalSet(context, uri.isNotEmpty())
     }
 
     suspend fun updateKmzLocationUri(uri: String) {

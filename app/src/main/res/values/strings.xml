@@ -38,8 +38,8 @@
     <!-- Home: OneUI live-notification suppression hint -->
     <string name="live_update_suppressed">Live timer chip hidden by system settings</string>
     <string name="live_update_suppressed_dialog">Samsung hides the timer chip and promoted card for
-        third-party apps. Turn on Developer options &gt; Live notifications for all apps to get it
-        back.</string>
+        third-party apps. In Developer options, search for \"live\" and turn on Live notifications
+        for all apps.</string>
     <string name="live_update_open_developer">Open Developer options</string>
 
     <!-- Home: service controls -->

@@ -1,6 +1,7 @@
 package com.mallner.triplogger
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -159,6 +161,30 @@ fun TripLoggerApp() {
             }
         )
     }
+    val openDeveloperSettings = {
+        // The OneUI live-notification allowlist switch lives here.
+        context.startActivity(
+            Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    // Samsung OneUI 7-9 suppress third-party live notifications (chip +
+    // promoted card) unless a developer option reopens the allowlist; the
+    // platform reports that through canPostPromotedNotifications().
+    var liveNotificationsSuppressed by rememberSaveable { mutableStateOf(false) }
+    val refreshLiveUpdateHint = {
+        val canPromote = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA)
+            runCatching {
+                context.getSystemService(NotificationManager::class.java)
+                    ?.canPostPromotedNotifications()
+            }.getOrNull() != false
+        else true
+        liveNotificationsSuppressed = LiveUpdateHint.showHint(
+            Build.VERSION.SDK_INT, LiveUpdateHint.oneUiMajor(context), canPromote
+        )
+    }
+    LaunchedEffect(Unit) { refreshLiveUpdateHint() }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -168,6 +194,7 @@ fun TripLoggerApp() {
                 permissionsGranted = essentialPermissions.all { isGranted(it) }
                 backgroundLocationGranted =
                     !needsBackgroundLocation || isGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                refreshLiveUpdateHint()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -205,8 +232,10 @@ fun TripLoggerApp() {
                     modifier = Modifier.padding(innerPadding),
                     permissionsGranted = permissionsGranted,
                     backgroundLocationGranted = backgroundLocationGranted,
+                    liveNotificationsSuppressed = liveNotificationsSuppressed,
                     onRequestPermissions = { launcher.launch(essentialPermissions) },
-                    onOpenAppSettings = openAppSettings
+                    onOpenAppSettings = openAppSettings,
+                    onOpenDeveloperSettings = openDeveloperSettings
                 )
             } else if (currentDestination == AppDestinations.TRIPS) {
                 TripsScreen(modifier = Modifier.padding(innerPadding), appSettingsRepository)
@@ -224,8 +253,10 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     permissionsGranted: Boolean,
     backgroundLocationGranted: Boolean,
+    liveNotificationsSuppressed: Boolean,
     onRequestPermissions: () -> Unit,
-    onOpenAppSettings: () -> Unit
+    onOpenAppSettings: () -> Unit,
+    onOpenDeveloperSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val appSettingsRepository = remember { AppSettingsRepository(context) }
@@ -298,6 +329,48 @@ fun HomeScreen(
                     },
                     dismissButton = {
                         TextButton(onClick = { showBackgroundLocationHint = false }) { Text(stringResource(android.R.string.cancel)) }
+                    }
+                )
+            }
+        }
+
+        // Soft warning, same rules as above: OneUI can hide the live timer
+        // chip behind a developer option; deep-link there when it does.
+        if (liveNotificationsSuppressed) {
+            var showLiveUpdateHint by remember { mutableStateOf(false) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clickable { showLiveUpdateHint = true }
+                    .padding(vertical = 4.dp)
+            ) {
+                Icon(
+                    Icons.Filled.Notifications,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.live_update_suppressed),
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp
+                )
+            }
+            if (showLiveUpdateHint) {
+                AlertDialog(
+                    onDismissRequest = { showLiveUpdateHint = false },
+                    text = { Text(stringResource(R.string.live_update_suppressed_dialog)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showLiveUpdateHint = false
+                            onOpenDeveloperSettings()
+                        }) { Text(stringResource(R.string.live_update_open_developer)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showLiveUpdateHint = false }) {
+                            Text(stringResource(android.R.string.cancel))
+                        }
                     }
                 )
             }

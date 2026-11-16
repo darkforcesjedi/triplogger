@@ -35,6 +35,13 @@
     <string name="permissions_background_dialog">Background location is required to continue tracking when you use other apps or lock the device. Enable in Permissions &gt; Location &gt; Allow all the time.</string>
     <string name="permissions_open_settings">Open Settings</string>
 
+    <!-- Home: OneUI live-notification suppression hint -->
+    <string name="live_update_suppressed">Live timer chip hidden by system settings</string>
+    <string name="live_update_suppressed_dialog">Samsung hides the timer chip and promoted card for
+        third-party apps. Turn on Developer options &gt; Live notifications for all apps to get it
+        back.</string>
+    <string name="live_update_open_developer">Open Developer options</string>
+
     <!-- Home: service controls -->
     <string name="home_service_enabled">Service Enabled</string>
     <string name="home_service_needs_temp">Choose a Temporary Storage Location in Settings first</string>

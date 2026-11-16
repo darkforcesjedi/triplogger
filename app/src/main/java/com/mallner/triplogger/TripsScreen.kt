@@ -16,7 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -474,12 +473,16 @@ private fun TripDetail(
                         fontSize = 14.sp,
                         modifier = Modifier.weight(1f)
                     )
-                    Text(s.source, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val lat = s.latitude
                     val lon = s.longitude
                     if (lat != null && lon != null) {
                         IconButton(onClick = { openInMaps(context, lat, lon) }) {
-                            Icon(Icons.Default.Place, contentDescription = stringResource(R.string.trips_stops))
+                            Icon(
+                                painterResource(R.drawable.ic_stop_pin),
+                                contentDescription = stringResource(R.string.trips_stops),
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

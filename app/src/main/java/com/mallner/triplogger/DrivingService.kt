@@ -1024,7 +1024,8 @@ class DrivingService : Service() {
             odsStorage,
             plotRenderer,
             meta = if (row != null) db else null,
-            target = row?.toTarget()
+            target = row?.toTarget(),
+            stops = stops
         )
         when (result) {
             is FinalizeResult.Completed -> {

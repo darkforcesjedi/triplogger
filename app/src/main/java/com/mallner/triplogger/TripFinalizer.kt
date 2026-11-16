@@ -69,7 +69,9 @@ object TripFinalizer {
         odsStorage: TripStorage?,
         renderer: PlotRenderer,
         meta: TripMetadataWriter? = null,
-        target: FinalizeTarget? = null
+        target: FinalizeTarget? = null,
+        /** Annotate-mode stops; drawn as duration pins on the KMZ track. */
+        stops: List<StopEvent> = emptyList()
     ): FinalizeResult {
         return try {
             // The OBD CSV columns are positional and were written with the PID list the
@@ -119,7 +121,7 @@ object TripFinalizer {
             }
 
             if (settings.generateKmz && kmzStorage != null) {
-                val tripTrack = buildTrip(label, trackId, gpsRows, obdRows, settings.usUnits, startTz)
+                val tripTrack = buildTrip(label, trackId, gpsRows, obdRows, settings.usUnits, startTz, stops)
                     ?.let { it.copy(title = title, legacyTrackId = legacyTrackId) }
                 if (tripTrack != null) {
                     val existing = kmzStorage.read("$dayLabel.kmz")
@@ -306,7 +308,8 @@ object TripFinalizer {
         gpsRows: List<GpsRow>,
         obdRows: List<ObdRow>,
         us: Boolean = true,
-        startTz: Int? = null
+        startTz: Int? = null,
+        stops: List<StopEvent> = emptyList()
     ): TripTrack? {
         val points = gpsRows
             .sortedBy { it.gpsTime }
@@ -331,7 +334,8 @@ object TripFinalizer {
             gpsSpeeds = gpsSpeeds,
             tzChanges = tzChanges(gpsRows, obdRows, startTz),
             dateChanges = dateChanges(gpsRows, obdRows, startTz),
-            tzOffsetMin = startTz
+            tzOffsetMin = startTz,
+            stops = stops
         )
     }
 }

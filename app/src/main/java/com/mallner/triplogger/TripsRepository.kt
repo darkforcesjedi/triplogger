@@ -309,6 +309,10 @@ class TripsRepository(private val context: Context) {
                 ?: error("Temporary storage unavailable")
             val trip = findTrip(store, entry.name) ?: error("Trip ${entry.name} not found")
             val (db, row) = rowFor(entry)
+            // Rebuilt KMZ must carry the same stop pins the first conversion got.
+            val stops = db.listStops(row.id).map {
+                StopEvent(it.startMs, it.endMs, it.latitude, it.longitude, it.source)
+            }
             val kmzStorage = if (settings.generateKmz) Storage.outputStorage(context, settings, settings.kmzLocationUri) else null
             val odsStorage = if (settings.saveOds) Storage.outputStorage(context, settings, settings.odsLocationUri) else null
 
@@ -325,7 +329,8 @@ class TripsRepository(private val context: Context) {
                 odsStorage,
                 AndroidPlotRenderer(context),
                 meta = db,
-                target = row.toTarget()
+                target = row.toTarget(),
+                stops = stops
             )
             when (result) {
                 is FinalizeResult.Completed -> {

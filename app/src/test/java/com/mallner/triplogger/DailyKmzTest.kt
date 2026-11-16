@@ -1,6 +1,7 @@
 package com.mallner.triplogger
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -156,5 +157,58 @@ class DailyKmzTest {
         // merge in reverse order; the output must still list "a" before "b"
         val (kml, _) = DailyKmz.inspect(builder.merge(null, "d", listOf(laterUtc, earlierUtc)))
         assertTrue(kml!!.indexOf("<gx:Track id=\"a\">") < kml.indexOf("<gx:Track id=\"b\">"))
+    }
+
+    // ---- stop pins ----------------------------------------------------------
+
+    private val pinStop = StopEvent(1768797660_000L, 1768797960_000L, 37.389, -122.0834, "wheel")
+
+    @Test
+    fun locatedStopsBecomeDurationPinsAndUnlocatedOnesAreSkipped() {
+        val t = trip("t1768797600000").copy(stops = listOf(
+            pinStop,
+            StopEvent(1768798500_000L, 1768798800_000L, null, null, "gps")
+        ))
+        val (kml, _) = DailyKmz.inspect(
+            DailyKmz(renderer = FakePlotRenderer).merge(null, "2026-01-19", listOf(t))
+        )
+        assertTrue("missing pin placemark: $kml",
+            kml!!.contains("<Placemark id=\"t1768797600000-stop${pinStop.startMs}\">"))
+        assertEquals(1, Regex("<Placemark id=").findAll(kml).count()) // no fix -> no pin
+        assertTrue("name lacks duration", kml.contains("Stop ") && kml.contains("- 5:00</name>"))
+        assertTrue("balloon lacks source", kml.contains("Source wheel"))
+        assertTrue("missing point coords", kml.contains("<coordinates>-122.0834,37.389,0</coordinates>"))
+        assertTrue("pin must carry a TimeStamp for ordering", kml.contains("<TimeStamp><when>"))
+    }
+
+    @Test
+    fun pinsAreReplacedNotDuplicatedOnRebuild() {
+        val builder = DailyKmz(renderer = FakePlotRenderer)
+        val t = trip("t1768797600000").copy(stops = listOf(pinStop))
+        var kmz = builder.merge(null, "2026-01-19", listOf(t))
+        kmz = builder.merge(kmz, "2026-01-19", listOf(t))
+        var kml = DailyKmz.inspect(kmz).first
+        assertEquals(1, Regex("<Placemark id=").findAll(kml!!).count())
+        // A rebuild with a different stop list must drop the stale pin.
+        val changed = t.copy(stops = listOf(StopEvent(1768798200_000L, 1768798500_000L, 37.39, -122.08, "gps")))
+        kmz = builder.merge(kmz, "2026-01-19", listOf(changed))
+        kml = DailyKmz.inspect(kmz).first
+        assertEquals(1, Regex("<Placemark id=").findAll(kml!!).count())
+        assertTrue(kml.contains("-stop1768798200000"))
+        assertFalse("stale pin survived rebuild", kml.contains("-stop${pinStop.startMs}"))
+    }
+
+    @Test
+    fun pinsDoNotDisturbTripColorsAndRenameKeepsPins() {
+        val builder = DailyKmz(renderer = FakePlotRenderer)
+        var kmz = builder.merge(null, "2026-01-19", listOf(trip("t1768797600000").copy(stops = listOf(pinStop))))
+        kmz = builder.merge(kmz, "2026-01-19", listOf(trip("t1768800000000")))
+        var (kml, _) = DailyKmz.inspect(kmz)
+        val colors = Regex("<color>(\\w+)</color>").findAll(kml!!).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("FF1400FF", "FF14F0FF"), colors) // pins consumed no color
+        val renamed = DailyKmz.renamePlacemark(kmz, listOf("t1768797600000"), "Errand")
+        kml = DailyKmz.inspect(renamed!!).first
+        assertTrue("rename lost title", kml!!.contains("<name>Errand</name>"))
+        assertTrue("rename lost the stop pin", kml.contains("-stop${pinStop.startMs}"))
     }
 }

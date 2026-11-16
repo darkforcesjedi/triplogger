@@ -47,7 +47,9 @@ data class TripTrack(
     /** User title: carries the placemark name and the chart caption (null = label). */
     val title: String? = null,
     /** v1.1 label-derived id of this same trip, when converting a legacy placemark. */
-    val legacyTrackId: String? = null
+    val legacyTrackId: String? = null,
+    /** Annotate-mode confirmed stops; become pins with durations along the track. */
+    val stops: List<StopEvent> = emptyList()
 )
 
 /**
@@ -112,6 +114,38 @@ class DailyKmz(
         /** Shortest round-trip decimal string (KML does not like fixed padding). */
         fun dtostr(value: Double): String = if (value.isNaN() || value.isInfinite()) "0" else value.toString()
 
+        /**
+         * Pin key embedding the owning track id, so rebuilding a trip
+         * replaces (and re-deriving without the stop drops) its own pins.
+         */
+        internal fun pinId(trackId: String, startMs: Long): String = "$trackId-stop$startMs"
+
+        /**
+         * One stop as a standalone Point placemark beside the track: plain
+         * default pin (no icon href keeps the KMZ portable), name and balloon
+         * carry the dwell duration, and the TimeStamp sorts it chronologically
+         * with the trip blocks. Null for stops with no fix during the dwell.
+         */
+        internal fun stopPinXml(trackId: String, stop: StopEvent, tzOffsetMin: Int?): String? {
+            val lat = stop.latitude ?: return null
+            val lon = stop.longitude ?: return null
+            val duration = AppNotificationManager.formatChipDuration(stop.durationSec * 1000)
+            val clock = TripFormats.tripLabel(stop.startMs, tzOffsetMin).substringAfter(' ').replace('.', ':')
+            val start = TripFormats.kmlWhen(stop.startMs, tzOffsetMin)
+            val end = TripFormats.kmlWhen(stop.endMs, tzOffsetMin)
+            val sb = StringBuilder()
+            sb.append("  <Placemark id=\"" + pinId(trackId, stop.startMs) + "\">\n")
+            sb.append("    <name>" + escXml("Stop $clock - $duration") + "</name>\n")
+            sb.append("    <description><![CDATA[Stop $duration<br/>$start - $end<br/>" +
+                "Source ${stop.source}]]></description>\n")
+            sb.append("    <TimeStamp><when>" + start + "</when></TimeStamp>\n")
+            sb.append("    <Style><IconStyle><scale>0.8</scale></IconStyle></Style>\n")
+            sb.append("    <Point><altitudeMode>clampToGround</altitudeMode><coordinates>" +
+                dtostr(lon) + "," + dtostr(lat) + ",0</coordinates></Point>\n")
+            sb.append("  </Placemark>\n")
+            return sb.toString()
+        }
+
         private val WHEN_MS = Regex("<when>(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})([-+]\\d{2}:\\d{2})?</when>")
 
         /** UTC instant of a block's first <when>; naive stamps read as device-local. */
@@ -166,7 +200,10 @@ class DailyKmz(
                 val e = kml.indexOf("</Placemark>", s)
                 if (e < 0) break
                 val block = kml.substring(s, e + "</Placemark>".length) + "\n"
-                val id = Regex("gx:Track id=\"([^\"]+)\"").find(block)?.groupValues?.get(1) ?: "#unkeyed-${unkeyed++}"
+                val id = Regex("gx:Track id=\"([^\"]+)\"").find(block)?.groupValues?.get(1)
+                    // stop pins carry their id on the Placemark itself
+                    ?: Regex("<Placemark id=\"([^\"]+)\"").find(block)?.groupValues?.get(1)
+                    ?: "#unkeyed-${unkeyed++}"
                 blocks[id] = block
                 pos = e + "</Placemark>".length
             }
@@ -287,8 +324,10 @@ class DailyKmz(
             val idCandidates = listOfNotNull(trip.trackId, trip.legacyTrackId)
             val previousKey = idCandidates.firstOrNull { blocks.containsKey(it) }
             val previousBlock = previousKey?.let { blocks[it] }
+            // Stop pins do not consume palette colors, so counting only track
+            // blocks keeps a trip's color stable across rebuilds.
             val color = previousBlock?.let { Regex("<color>([0-9A-Fa-f]+)</color>").find(it)?.groupValues?.get(1) }
-                ?: colorList[blocks.size % colorList.size]
+                ?: colorList[blocks.keys.count { "-stop" !in it } % colorList.size]
             val block = placemarkXml(trip.label, trip.trackId, color, trip.points, trip.title)
             if (previousKey != null) {
                 if (previousKey == trip.trackId) {
@@ -304,6 +343,17 @@ class DailyKmz(
                 }
             } else {
                 blocks[trip.trackId] = block
+            }
+            // Drop this trip's stale pins first (a rebuild may see a different
+            // stop list), then stamp the current ones; document order does not
+            // matter, blocks are emitted sorted by their first <when>.
+            for (ownerId in idCandidates) {
+                blocks.keys.filter { it.startsWith("$ownerId-stop") }.forEach { blocks.remove(it) }
+            }
+            for (stop in trip.stops) {
+                stopPinXml(trip.trackId, stop, trip.tzOffsetMin)?.let {
+                    blocks[pinId(trip.trackId, stop.startMs)] = it
+                }
             }
             existingEntries["${trip.label}.png"] = renderer.renderPng(
                 trip.label, trip.speedUnit, trip.tzOffsetMin,

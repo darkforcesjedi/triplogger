@@ -158,7 +158,14 @@ class DrivingService : Service() {
             .onFailure { Log.e("DrivingService", "Could not enter foreground", it) }
     }
 
-    /** Promote a boot-armed specialUse service to the real types when sanctioned. */
+    /**
+     * Promote a boot-armed specialUse service to the real types when
+     * sanctioned. A refusal KEEPS [pendingTypePromotion] set: the moment is
+     * permissive (app visible, trigger wake, screen on) and retried from the
+     * generic service start and the recording ticker, so a single refusal at
+     * logging start can never strand a whole trip on the unpromoted
+     * (chip-less) specialUse notification.
+     */
     private fun promoteForegroundIfNeeded(notification: android.app.Notification) {
         if (!pendingTypePromotion) return
         pendingTypePromotion = false
@@ -166,10 +173,24 @@ class DrivingService : Service() {
             ServiceCompat.startForeground(
                 this, notificationManager.notificationID(), notification, fullFgsTypes()
             )
+            ActivityLog.log("fgs_promoted", "full types")
+            promotionRefusalLogged = false
         }.onFailure {
             Log.w("DrivingService", "FGS type promotion refused", it)
             pendingTypePromotion = true // retry at the next sanctioned moment
+            if (!promotionRefusalLogged) {
+                promotionRefusalLogged = true
+                ActivityLog.log("fgs_promotion_refused", it.message ?: it.javaClass.simpleName)
+            }
         }
+    }
+
+    private var promotionRefusalLogged = false
+
+    /** Retry a pending promotion with the currently displayed notification. */
+    private fun retryPendingPromotion() {
+        if (!pendingTypePromotion) return
+        promoteForegroundIfNeeded(notificationManager.currentNotification())
     }
 
     @SuppressLint("MissingPermission")
@@ -277,6 +298,9 @@ class DrivingService : Service() {
             }
             updateIdleObdLink(settings)
             DrivingStatus.isConnected.value = isDeviceConnected(settings.bluetoothDeviceName)
+            // The app is visible now: a sanctioned moment to upgrade a
+            // boot- or wake-armed specialUse service to the real types.
+            retryPendingPromotion()
             val triggerName = connectedTriggerName(settings.bluetoothDeviceName)
             when {
                 triggerName != null -> startLogging(settings, triggerName)
@@ -306,6 +330,10 @@ class DrivingService : Service() {
             getString(R.string.service_enabled), getString(R.string.awaiting_bluetooth_connection)
         )
         enterForeground(initialNotification)
+        // Field diagnosis: which entry path this process took (full types or
+        // fallback) decides whether logging must promote, and the journal
+        // keeps these where logcat rotation cannot lose them.
+        ActivityLog.log("fgs_entered", if (pendingTypePromotion) "specialUse fallback" else "full types")
 
         val bluetoothManager: BluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
@@ -483,6 +511,12 @@ class DrivingService : Service() {
                             obdConnected = DrivingStatus.obdLink.value == ObdLinkState.CONNECTED
                         )
                     }.onFailure { Log.e("DrivingService", "Notification update failed", it) }
+                    // Mid-drive sanctioned moments (the driver glanced at the
+                    // app, the screen came on) retry the promotion the wake
+                    // path lost, so the chip returns without ending the trip.
+                    if (pendingTypePromotion) {
+                        promoteForegroundIfNeeded(notificationManager.currentNotification())
+                    }
                 }
                 delay(1000)
             }

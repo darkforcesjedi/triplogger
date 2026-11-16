@@ -153,6 +153,19 @@ class AppNotificationManager(private val context: Context) {
         return NOTIFICATION_ID
     }
 
+    /**
+     * The notification the manager is currently showing, for calls that must
+     * re-post it unchanged (ServiceCompat.startForeground on promotion takes
+     * a Notification but must not disturb what the user is looking at).
+     */
+    fun currentNotification(): android.app.Notification {
+        if (recording) return notificationBuilder.build()
+        return buildInitialNotification(
+            context.getString(R.string.service_enabled),
+            context.getString(R.string.awaiting_bluetooth_connection)
+        )
+    }
+
     fun notify(id: Int, notification: Notification) {
         notificationManager.notify(id, notification)
     }

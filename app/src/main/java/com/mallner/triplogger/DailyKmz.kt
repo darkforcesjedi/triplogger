@@ -122,23 +122,23 @@ class DailyKmz(
 
         /**
          * One stop as a standalone Point placemark beside the track: plain
-         * default pin (no icon href keeps the KMZ portable), name and balloon
-         * carry the dwell duration, and the TimeStamp sorts it chronologically
-         * with the trip blocks. Null for stops with no fix during the dwell.
+         * default pin (no icon href keeps the KMZ portable), name carries the
+         * dwell duration and the balloon the arrival/departure wall times; the
+         * TimeStamp sorts it chronologically with the trip blocks. Null for
+         * stops with no fix during the dwell.
          */
         internal fun stopPinXml(trackId: String, stop: StopEvent, tzOffsetMin: Int?): String? {
             val lat = stop.latitude ?: return null
             val lon = stop.longitude ?: return null
             val duration = AppNotificationManager.formatChipDuration(stop.durationSec * 1000)
-            val clock = TripFormats.tripLabel(stop.startMs, tzOffsetMin).substringAfter(' ').replace('.', ':')
-            val start = TripFormats.kmlWhen(stop.startMs, tzOffsetMin)
-            val end = TripFormats.kmlWhen(stop.endMs, tzOffsetMin)
+            val start = TripFormats.odsTime(stop.startMs, tzOffsetMin)
+            val end = TripFormats.odsTime(stop.endMs, tzOffsetMin)
             val sb = StringBuilder()
             sb.append("  <Placemark id=\"" + pinId(trackId, stop.startMs) + "\">\n")
-            sb.append("    <name>" + escXml("Stop $clock - $duration") + "</name>\n")
-            sb.append("    <description><![CDATA[Stop $duration<br/>$start - $end<br/>" +
-                "Source ${stop.source}]]></description>\n")
-            sb.append("    <TimeStamp><when>" + start + "</when></TimeStamp>\n")
+            sb.append("    <name>" + escXml("Stopped for $duration") + "</name>\n")
+            sb.append("    <description><![CDATA[Arrive: $start<br/>Depart: $end]]></description>\n")
+            sb.append("    <TimeStamp><when>" +
+                TripFormats.kmlWhen(stop.startMs, tzOffsetMin) + "</when></TimeStamp>\n")
             sb.append("    <Style><IconStyle><scale>0.8</scale></IconStyle></Style>\n")
             sb.append("    <Point><altitudeMode>clampToGround</altitudeMode><coordinates>" +
                 dtostr(lon) + "," + dtostr(lat) + ",0</coordinates></Point>\n")

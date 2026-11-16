@@ -175,8 +175,10 @@ class DailyKmzTest {
         assertTrue("missing pin placemark: $kml",
             kml!!.contains("<Placemark id=\"t1768797600000-stop${pinStop.startMs}\">"))
         assertEquals(1, Regex("<Placemark id=").findAll(kml).count()) // no fix -> no pin
-        assertTrue("name lacks duration", kml.contains("Stop ") && kml.contains("- 5:00</name>"))
-        assertTrue("balloon lacks source", kml.contains("Source wheel"))
+        assertTrue("name lacks duration", kml.contains("<name>Stopped for 5:00</name>"))
+        assertTrue("balloon lacks arrival", kml.contains("Arrive: "))
+        assertTrue("balloon lacks departure", kml.contains("Depart: "))
+        assertFalse("balloon still names the source", kml.contains("wheel"))
         assertTrue("missing point coords", kml.contains("<coordinates>-122.0834,37.389,0</coordinates>"))
         assertTrue("pin must carry a TimeStamp for ordering", kml.contains("<TimeStamp><when>"))
     }

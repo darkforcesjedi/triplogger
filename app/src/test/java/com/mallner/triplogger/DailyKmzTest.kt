@@ -175,6 +175,8 @@ class DailyKmzTest {
         assertTrue("missing pin placemark: $kml",
             kml!!.contains("<Placemark id=\"t1768797600000-stop${pinStop.startMs}\">"))
         assertEquals(1, Regex("<Placemark id=").findAll(kml).count()) // no fix -> no pin
+        assertTrue("stop trips must nest under a folder", kml.contains("<Folder>"))
+        assertTrue("folder lacks trip name", kml.contains("<Folder>\n  <name>t1768797600000</name>"))
         assertTrue("name lacks duration", kml.contains("<name>Stopped for 5:00</name>"))
         assertTrue("balloon lacks arrival", kml.contains("Arrive: "))
         assertTrue("balloon lacks departure", kml.contains("Depart: "))
@@ -191,13 +193,51 @@ class DailyKmzTest {
         kmz = builder.merge(kmz, "2026-01-19", listOf(t))
         var kml = DailyKmz.inspect(kmz).first
         assertEquals(1, Regex("<Placemark id=").findAll(kml!!).count())
+        assertEquals(1, Regex("<Folder>").findAll(kml).count())
         // A rebuild with a different stop list must drop the stale pin.
         val changed = t.copy(stops = listOf(StopEvent(1768798200_000L, 1768798500_000L, 37.39, -122.08, "gps")))
         kmz = builder.merge(kmz, "2026-01-19", listOf(changed))
         kml = DailyKmz.inspect(kmz).first
         assertEquals(1, Regex("<Placemark id=").findAll(kml!!).count())
+        assertEquals(1, Regex("<Folder>").findAll(kml).count())
         assertTrue(kml.contains("-stop1768798200000"))
         assertFalse("stale pin survived rebuild", kml.contains("-stop${pinStop.startMs}"))
+    }
+
+    @Test
+    fun stopFreeTripsStayFlatBesideFolders() {
+        val builder = DailyKmz(renderer = FakePlotRenderer)
+        var kmz = builder.merge(null, "2026-01-19", listOf(trip("t1768797600000").copy(stops = listOf(pinStop))))
+        kmz = builder.merge(kmz, "2026-01-19", listOf(trip("t1768800000000")))
+        // And the folder of the first trip must survive re-splitting the file.
+        kmz = builder.merge(kmz, "2026-01-19", listOf(trip("t1768800000000")))
+        val (kml, ids) = DailyKmz.inspect(kmz)
+        assertEquals(1, Regex("<Folder>").findAll(kml!!).count())
+        assertEquals(2, ids.size)
+        assertTrue(kml.contains("-stop${pinStop.startMs}"))
+        // the flat trip is a direct child: its placemark opens without id
+        assertTrue(Regex("<Placemark>\n    <name>t1768800000000</name>").containsMatchIn(kml))
+    }
+
+    @Test
+    fun legacyFlatPinsBecomeFolderChildrenOnRebuild() {
+        // Hand-built pre-folder KMZ: flat track placemark + flat pin sibling.
+        val track = DailyKmz.placemarkXml("2026-01-19 06.00.00", "t1768797600000", "FF1400FF",
+            trip("t1768797600000").points)
+        val pin = DailyKmz.stopPinXml("t1768797600000", pinStop, null)!!
+        val flatKml = "<kml><Document>\n$track$pin</Document></kml>"
+        val out = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { z ->
+            z.putNextEntry(java.util.zip.ZipEntry("2026-01-19.kml"))
+            z.write(flatKml.toByteArray())
+            z.closeEntry()
+        }
+        val kmz = DailyKmz(renderer = FakePlotRenderer)
+            .merge(out.toByteArray(), "2026-01-19", listOf(trip("t1768797600000").copy(stops = listOf(pinStop))))
+        val (kml, ids) = DailyKmz.inspect(kmz)
+        assertEquals(setOf("t1768797600000"), ids)
+        assertEquals(1, Regex("<Folder>").findAll(kml!!).count())
+        assertEquals(1, Regex("<Placemark id=").findAll(kml).count()) // no duplicate pin
     }
 
     @Test
@@ -210,7 +250,8 @@ class DailyKmzTest {
         assertEquals(listOf("FF1400FF", "FF14F0FF"), colors) // pins consumed no color
         val renamed = DailyKmz.renamePlacemark(kmz, listOf("t1768797600000"), "Errand")
         kml = DailyKmz.inspect(renamed!!).first
-        assertTrue("rename lost title", kml!!.contains("<name>Errand</name>"))
+        assertEquals(2, Regex("<name>Errand</name>").findAll(kml!!).count()) // folder + track
         assertTrue("rename lost the stop pin", kml.contains("-stop${pinStop.startMs}"))
+        assertTrue("rename clobbered the pin name", kml.contains("<name>Stopped for 5:00</name>"))
     }
 }

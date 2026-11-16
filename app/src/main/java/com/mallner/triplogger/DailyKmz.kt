@@ -56,6 +56,9 @@ data class TripTrack(
  * Builds Google-Earth KMZ files that are structurally identical to what the
  * Python TorqueLogs converter produces: one "<date>.kml" document with one
  * gx:Track placemark per trip plus one "<label>.png" speed plot per trip.
+ * Trips with stop annotations are grouped in a Folder together with their
+ * "Stopped for <duration>" pins, so Google Earth nests the stops under the
+ * trip; stop-free trips stay flat placemarks.
  *
  * Placemarks are kept in chronological order (by the UTC instant of their
  * first <when>, offset-aware). Re-processing a trip (crash recovery, rebuild
@@ -83,9 +86,7 @@ class DailyKmz(
          * are the title instead (timestamp stays below it).
          */
         fun placemarkXml(label: String, trackId: String, color: String, points: List<TrackPoint>, title: String? = null): String {
-            val offsetMin = points.firstNotNullOfOrNull { it.tzOffsetMin }
-            val name = title?.takeIf { it.isNotBlank() }
-                ?: label + (offsetMin?.let { " " + TripFormats.utcLabel(it) } ?: "")
+            val name = tripName(label, points, title)
             val timestamp = points.firstOrNull()?.let { TripFormats.kmlWhen(it.gpsTimeMs, it.tzOffsetMin) + "<br/>" } ?: ""
             val caption = title?.takeIf { it.isNotBlank() }?.let { escXml(it) + "<br/>" }.orEmpty() + timestamp
             val sb = StringBuilder()
@@ -111,6 +112,13 @@ class DailyKmz(
             return sb.toString()
         }
 
+        /** Placemark (and folder) label: title, or the label plus start-of-trip UTC offset. */
+        internal fun tripName(label: String, points: List<TrackPoint>, title: String?): String {
+            val offsetMin = points.firstNotNullOfOrNull { it.tzOffsetMin }
+            return title?.takeIf { it.isNotBlank() }
+                ?: label + (offsetMin?.let { " " + TripFormats.utcLabel(it) } ?: "")
+        }
+
         /** Shortest round-trip decimal string (KML does not like fixed padding). */
         fun dtostr(value: Double): String = if (value.isNaN() || value.isInfinite()) "0" else value.toString()
 
@@ -121,11 +129,10 @@ class DailyKmz(
         internal fun pinId(trackId: String, startMs: Long): String = "$trackId-stop$startMs"
 
         /**
-         * One stop as a standalone Point placemark beside the track: plain
-         * default pin (no icon href keeps the KMZ portable), name carries the
-         * dwell duration and the balloon the arrival/departure wall times; the
-         * TimeStamp sorts it chronologically with the trip blocks. Null for
-         * stops with no fix during the dwell.
+         * One stop as a Point placemark grouped with its trip in a Folder:
+         * plain default pin (no icon href keeps the KMZ portable), name carries
+         * the dwell duration and the balloon the arrival/departure wall times.
+         * Null for stops with no fix during the dwell.
          */
         internal fun stopPinXml(trackId: String, stop: StopEvent, tzOffsetMin: Int?): String? {
             val lat = stop.latitude ?: return null
@@ -145,6 +152,20 @@ class DailyKmz(
             sb.append("  </Placemark>\n")
             return sb.toString()
         }
+
+        /**
+         * Group a trip's track placemark with its stop pins so Google Earth
+         * nests the pins under the trip in the Places tree. KML has no
+         * feature-to-feature hierarchy; Folder is the containment mechanism.
+         */
+        private fun folderXml(name: String, trackBlock: String, pinBlocks: List<String>): String =
+            buildString {
+                append("<Folder>\n")
+                append("  <name>" + escXml(name) + "</name>\n")
+                append(trackBlock)
+                pinBlocks.forEach { append(it) }
+                append("</Folder>\n")
+            }
 
         private val WHEN_MS = Regex("<when>(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})([-+]\\d{2}:\\d{2})?</when>")
 
@@ -182,32 +203,57 @@ class DailyKmz(
             .replace("\"", "&quot;").replace("'", "&apos;")
 
         /**
-         * Split a KML document into head + placemark blocks (keyed by their
-         * gx:Track id, unkeyed blocks get positional keys) + tail.
+         * Split a KML document into head + feature blocks + tail. A block is a
+         * top-level Placemark or Folder (the latter groups a trip's track with
+         * its stop pins); blocks are keyed by their gx:Track id when present
+         * (a folder keys by the track it contains), else by Placemark id, and
+         * unkeyed blocks get positional keys.
          */
         internal fun splitPlacemarks(kml: String): Triple<String, LinkedHashMap<String, String>, String> {
-            val first = kml.indexOf("<Placemark")
-            val last = kml.lastIndexOf("</Placemark>")
-            if (first < 0 || last < 0) return Triple(KML_HEADER, linkedMapOf(), KML_FOOTER)
-            val head = kml.substring(0, first)
-            val tail = kml.substring(last + "</Placemark>".length)
             val blocks = LinkedHashMap<String, String>()
-            var pos = first
+            var pos = 0
             var unkeyed = 0
-            while (true) {
-                val s = kml.indexOf("<Placemark", pos)
-                if (s < 0) break
-                val e = kml.indexOf("</Placemark>", s)
-                if (e < 0) break
-                val block = kml.substring(s, e + "</Placemark>".length) + "\n"
+            var firstBlock = -1
+            var endLast = -1
+            while (pos < kml.length) {
+                val p = kml.indexOf("<Placemark", pos)
+                val f = kml.indexOf("<Folder", pos)
+                val start = when {
+                    p < 0 && f < 0 -> break
+                    f in 0 until if (p < 0) Int.MAX_VALUE else p -> f
+                    else -> p
+                }
+                val end = if (start == f) folderEnd(kml, start)
+                    else kml.indexOf("</Placemark>", start).takeIf { it >= 0 }?.plus("</Placemark>".length)
+                if (end == null) break // malformed tail: keep what we parsed
+                val block = kml.substring(start, end) + "\n"
                 val id = Regex("gx:Track id=\"([^\"]+)\"").find(block)?.groupValues?.get(1)
                     // stop pins carry their id on the Placemark itself
                     ?: Regex("<Placemark id=\"([^\"]+)\"").find(block)?.groupValues?.get(1)
                     ?: "#unkeyed-${unkeyed++}"
                 blocks[id] = block
-                pos = e + "</Placemark>".length
+                if (firstBlock < 0) firstBlock = start
+                endLast = end
+                pos = end
             }
-            return Triple(head, blocks, tail)
+            if (blocks.isEmpty()) return Triple(KML_HEADER, linkedMapOf(), KML_FOOTER)
+            return Triple(kml.substring(0, firstBlock), blocks, kml.substring(endLast))
+        }
+
+        /** Index just past the `</Folder>` matching the `<Folder` opening at [start]. */
+        private fun folderEnd(kml: String, start: Int): Int? {
+            var depth = 1 // the opening tag at [start] itself
+            var pos = start
+            while (true) {
+                val close = kml.indexOf("</Folder>", pos)
+                if (close < 0) return null
+                val open = kml.indexOf("<Folder", pos + 1)
+                if (open in 0 until close) { depth++; pos = open + 7 } else {
+                    depth--
+                    pos = close + 9
+                    if (depth == 0) return pos
+                }
+            }
         }
 
         /**
@@ -251,8 +297,13 @@ class DailyKmz(
                 ?: (label + (utcSuffix?.let { " $it" } ?: ""))
             val caption = (title?.takeIf { it.isNotBlank() }?.let { escXml(it) + "<br/>" } ?: "") +
                 (whenLine.takeIf { it.isNotEmpty() }?.let { "$it<br/>" } ?: "")
+            // A folder block carries the trip name twice (folder + track);
+            // stop pins keep their "Stopped for ..." names.
+            var nameSlots = if (blocks[matchedId]!!.startsWith("<Folder")) 2 else 1
             val renamed = blocks[matchedId]!!
-                .replaceFirst(Regex("<name>.*</name>"), "<name>${escXml(name)}</name>")
+                .replace(Regex("<name>.*</name>")) {
+                    if (nameSlots-- > 0) "<name>${escXml(name)}</name>" else it.value
+                }
                 .replaceFirst(
                     Regex("<description><!\\[CDATA\\[.*]]></description>"),
                     "<description><![CDATA[$caption<img src=\"$imgSrc\">]]></description>"
@@ -328,7 +379,12 @@ class DailyKmz(
             // blocks keeps a trip's color stable across rebuilds.
             val color = previousBlock?.let { Regex("<color>([0-9A-Fa-f]+)</color>").find(it)?.groupValues?.get(1) }
                 ?: colorList[blocks.keys.count { "-stop" !in it } % colorList.size]
-            val block = placemarkXml(trip.label, trip.trackId, color, trip.points, trip.title)
+            val block0 = placemarkXml(trip.label, trip.trackId, color, trip.points, trip.title)
+            // With stops, group track and pins in a Folder so Google Earth
+            // nests them under the trip; without, keep a flat placemark.
+            val pinBlocks = trip.stops.mapNotNull { stopPinXml(trip.trackId, it, trip.tzOffsetMin) }
+            val block = if (pinBlocks.isEmpty()) block0 else
+                folderXml(tripName(trip.label, trip.points, trip.title), block0, pinBlocks)
             if (previousKey != null) {
                 if (previousKey == trip.trackId) {
                     blocks[previousKey] = block // same key: in-place, order preserved
@@ -344,16 +400,10 @@ class DailyKmz(
             } else {
                 blocks[trip.trackId] = block
             }
-            // Drop this trip's stale pins first (a rebuild may see a different
-            // stop list), then stamp the current ones; document order does not
-            // matter, blocks are emitted sorted by their first <when>.
+            // Drop stale flat pins from earlier builds (a rebuild may see a
+            // different stop list); the fresh pins live inside the folder.
             for (ownerId in idCandidates) {
                 blocks.keys.filter { it.startsWith("$ownerId-stop") }.forEach { blocks.remove(it) }
-            }
-            for (stop in trip.stops) {
-                stopPinXml(trip.trackId, stop, trip.tzOffsetMin)?.let {
-                    blocks[pinId(trip.trackId, stop.startMs)] = it
-                }
             }
             existingEntries["${trip.label}.png"] = renderer.renderPng(
                 trip.label, trip.speedUnit, trip.tzOffsetMin,

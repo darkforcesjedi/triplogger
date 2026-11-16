@@ -1,7 +1,6 @@
 package com.mallner.triplogger
 
 import android.Manifest
-import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -174,14 +173,9 @@ fun TripLoggerApp() {
     // platform reports that through canPostPromotedNotifications().
     var liveNotificationsSuppressed by rememberSaveable { mutableStateOf(false) }
     val refreshLiveUpdateHint = {
-        val canPromote = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA)
-            runCatching {
-                context.getSystemService(NotificationManager::class.java)
-                    ?.canPostPromotedNotifications()
-            }.getOrNull() != false
-        else true
         liveNotificationsSuppressed = LiveUpdateHint.showHint(
-            Build.VERSION.SDK_INT, LiveUpdateHint.oneUiMajor(context), canPromote
+            Build.VERSION.SDK_INT, LiveUpdateHint.oneUiMajor(context),
+            LiveUpdateHint.readLiveFlag(context)
         )
     }
     LaunchedEffect(Unit) { refreshLiveUpdateHint() }
@@ -274,7 +268,10 @@ fun HomeScreen(
     // Use LaunchedEffect to start the service based on the initial appSettings state
     LaunchedEffect(key1 = appSettings.serviceEnabled, key2 = permissionsGranted, key3 = appSettings.tempLocationUri) {
         if (appSettings.serviceEnabled && permissionsGranted && appSettings.tempLocationUri.isNotEmpty()) {
-            context.startService(Intent(context, DrivingService::class.java))
+            // Launching onto a just-locked screen leaves us in the background
+            // for a moment; the service re-arms itself on the next real
+            // resume, so a refused start here must never crash the app.
+            runCatching { context.startService(Intent(context, DrivingService::class.java)) }
         }
     }
 

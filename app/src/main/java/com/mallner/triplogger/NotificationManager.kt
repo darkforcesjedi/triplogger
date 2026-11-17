@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
 class AppNotificationManager(private val context: Context) {
 
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private val channelId = "driving_service_channel"
+    private val channelId = "driving_service_channel_v2"
     private val notificationBuilder: NotificationCompat.Builder
     private val stopServicePendingIntent: PendingIntent
     private val newTripPendingIntent: PendingIntent
@@ -127,9 +127,12 @@ class AppNotificationManager(private val context: Context) {
 
         notificationBuilder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setOnlyAlertOnce(true)
+            // Intentionally no setOnlyAlertOnce: field-bisection proved it
+            // irrelevant to the OneUI 9 keyguard fix either way, but it buys
+            // nothing on a silent channel and multiple OEM reports tie it to
+            // live surfaces skipping updates, so it stays off.
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setContentIntent(pendingIntent)
             .setContentTitle(context.getString(R.string.app_name))
@@ -138,14 +141,25 @@ class AppNotificationManager(private val context: Context) {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // The channel's importance only matters for the *first* time a notification is posted to it.
-            // LOW is the lowest importance that still allows promotion (MIN blocks it).
+            // OneUI 9 (Oct-2026 firmware) stopped re-binding keyguard/AOD
+            // notification content for LOW-importance channels: the live
+            // card froze until the next screen-off cycle (even a chronometer
+            // ticked zero times). Bisected on-device: the ONLY required
+            // change is this channel at IMPORTANCE_DEFAULT; dropping
+            // CATEGORY_NAVIGATION, VISIBILITY_PUBLIC and setOnlyAlertOnce
+            // were each ruled out. DEFAULT stays alert-free via the silent
+            // channel (no sound, no vibration). Old channels are immutable,
+            // hence the v2 id; the v1 channel is deleted (no ghost toggle
+            // left in Settings).
             val channel = NotificationChannel(
                 channelId,
                 "Driving Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             )
+            channel.setSound(null, null)
+            channel.enableVibration(false)
             notificationManager.createNotificationChannel(channel)
+            runCatching { notificationManager.deleteNotificationChannel("driving_service_channel") }
         }
     }
 

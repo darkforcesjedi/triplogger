@@ -78,3 +78,29 @@ this is Google's friction against drive-by APKs, not a restriction specific
 to this app. The debug APK built by `assembleDebug` and a self-signed
 release APK cannot both be installed under the same package name without
 uninstalling the other (different signing keys).
+
+## OEM behaviour notes
+
+Measured on a Galaxy S25 Ultra (OneUI 9 / Android 17, Oct-2026 firmware),
+relevant when touching the service notification:
+
+- **Live/"now" treatment is allow-listed by Samsung.** Ongoing notifications
+  only become live chips if the package is on a firmware allow-list resource
+  (`android:string/config_DefaultOngoingActivityAllowPackages`) or a signed
+  runtime policy delivered above it; there is no public API to register.
+  The Developer-options switch "Live notifications for all apps" (secure
+  setting `enable_notification_nowbar_test`) bypasses the gate for testing,
+  and the Home tab explains this when live updates look suppressed.
+- **Keyguard/AOD only refreshes DEFAULT-importance channels since the
+  Oct-2026 firmware.** A LOW-importance channel's card froze (per-second
+  updates invisible, chronometer included) until the next screen-off cycle.
+  Field-bisected: bumping the channel to `IMPORTANCE_DEFAULT` is the ONLY
+  required change; restoring `CATEGORY_NAVIGATION`, `VISIBILITY_PUBLIC`, or
+  `setOnlyAlertOnce` each changed nothing. The v2 channel is kept silent
+  (no sound, no vibration) so DEFAULT adds no alerts. `setOnlyAlertOnce`
+  stays off deliberately: no benefit on a silent channel, and OEM reports
+  tie it to skipped live updates.
+- **Samsung's now-bar pill/chip clears only when the notification is
+  canceled**; swapping its content in place (promoted recording card to the
+  idle card) leaves a stale live entry. `stopLogging()` therefore cancels
+  the notification and reposts the idle one under the same id.

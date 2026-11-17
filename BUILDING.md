@@ -81,7 +81,7 @@ uninstalling the other (different signing keys).
 
 ## OEM behaviour notes
 
-Measured on a Galaxy S25 Ultra (OneUI 9 / Android 17, Oct-2026 firmware),
+Measured on a Galaxy S26 Ultra (OneUI 9 / Android 17, Oct-2026 firmware),
 relevant when touching the service notification:
 
 - **Live/"now" treatment is allow-listed by Samsung.** Ongoing notifications

@@ -564,6 +564,13 @@ class DrivingService : Service() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
         finalizeCurrentJournal()
 
+        // OneUI's now bar keeps a promoted (live) notification's pill and the
+        // status-bar chip until the notification is CANCELED; replacing it in
+        // place with the idle layout leaves a stale live entry (the promoted
+        // flag on the existing record never clears). Cancel first, then post
+        // the idle notification fresh under the same id, so the system drops
+        // the pill and does not re-promote the non-promoted repost.
+        notificationManager.cancelNotification()
         val notification = notificationManager.buildInitialNotification(
             getString(R.string.service_enabled),
             getString(R.string.awaiting_bluetooth_connection)
